@@ -304,7 +304,7 @@ int dns_add_nameserver(FAR const struct sockaddr *addr, socklen_t addrlen)
       nerr("ERROR: Failed to open %s: %d\n",
            CONFIG_NETDB_RESOLVCONF_PATH, ret);
       DEBUGASSERT(ret < 0);
-      goto errout;
+      dns_unlock();
     }
 
   /* Write the new record to the head of the resolv.conf file. */
@@ -350,7 +350,10 @@ int dns_add_nameserver(FAR const struct sockaddr *addr, socklen_t addrlen)
 
 errout:
   dns_unlock();
-  fclose(stream);
+  if (stream != NULL)
+    {
+      fclose(stream);
+    }
 
   if (ret == OK)
     {
