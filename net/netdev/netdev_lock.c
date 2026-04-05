@@ -42,7 +42,10 @@
 
 void netdev_lock(FAR struct net_driver_s *dev)
 {
-  nxrmutex_lock(&dev->d_lock);
+  int ret = nxrmutex_lock(&dev->d_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
 }
 
 /****************************************************************************
@@ -55,5 +58,8 @@ void netdev_lock(FAR struct net_driver_s *dev)
 
 void netdev_unlock(FAR struct net_driver_s *dev)
 {
-  nxrmutex_unlock(&dev->d_lock);
+  int ret = nxrmutex_unlock(&dev->d_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
 }

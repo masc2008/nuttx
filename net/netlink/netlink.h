@@ -651,6 +651,17 @@ void netlink_lock(void);
 
 void netlink_unlock(void);
 
+/****************************************************************************
+ * Name: netlink_sem_timedwait
+ *
+ * Description:
+ *   Wait for sem while temporarily releasing the global netlink lock.
+ *
+ ****************************************************************************/
+
+int netlink_sem_timedwait(FAR sem_t *sem, bool interruptible,
+                          unsigned int timeout);
+
 #undef EXTERN
 #ifdef __cplusplus
 }

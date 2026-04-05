@@ -167,12 +167,18 @@ extern "C"
 
 static inline_function void conn_lock(FAR struct socket_conn_s *sconn)
 {
-  nxrmutex_lock(&sconn->s_lock);
+  int ret = nxrmutex_lock(&sconn->s_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
 }
 
 static inline_function void conn_unlock(FAR struct socket_conn_s *sconn)
 {
-  nxrmutex_unlock(&sconn->s_lock);
+  int ret = nxrmutex_unlock(&sconn->s_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
 }
 
 static inline_function void conn_dev_lock(FAR struct socket_conn_s *sconn,
@@ -183,13 +189,13 @@ static inline_function void conn_dev_lock(FAR struct socket_conn_s *sconn,
       netdev_lock(dev);
     }
 
-  nxrmutex_lock(&sconn->s_lock);
+  conn_lock(sconn);
 }
 
 static inline_function void conn_dev_unlock(FAR struct socket_conn_s *sconn,
                                             FAR struct net_driver_s *dev)
 {
-  nxrmutex_unlock(&sconn->s_lock);
+  conn_unlock(sconn);
 
   if (dev != NULL)
     {

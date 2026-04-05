@@ -478,8 +478,7 @@ int netlink_get_response(FAR struct netlink_conn_s *conn,
           /* Wait for a response to be queued */
 
           tls_cleanup_push(tls_get_info(), netlink_notifier_teardown, conn);
-          ret = net_sem_timedwait2(&waitsem, true, UINT_MAX, &g_netlink_lock,
-                                   NULL);
+          ret = netlink_sem_timedwait(&waitsem, true, UINT_MAX);
           tls_cleanup_pop(tls_get_info(), 0);
         }
 
@@ -532,7 +531,10 @@ bool netlink_check_response(FAR struct netlink_conn_s *conn)
 
 void netlink_lock(void)
 {
-  nxrmutex_lock(&g_netlink_lock);
+  int ret = nxrmutex_lock(&g_netlink_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
 }
 
 /****************************************************************************
@@ -545,7 +547,25 @@ void netlink_lock(void)
 
 void netlink_unlock(void)
 {
-  nxrmutex_unlock(&g_netlink_lock);
+  int ret = nxrmutex_unlock(&g_netlink_lock);
+
+  DEBUGASSERT(ret >= 0);
+  UNUSED(ret);
+}
+
+/****************************************************************************
+ * Name: netlink_sem_timedwait
+ *
+ * Description:
+ *   Wait for sem while temporarily releasing the global netlink lock.
+ *
+ ****************************************************************************/
+
+int netlink_sem_timedwait(FAR sem_t *sem, bool interruptible,
+                          unsigned int timeout)
+{
+  return net_sem_timedwait2(sem, interruptible, timeout, &g_netlink_lock,
+                            NULL);
 }
 
 #endif /* CONFIG_NET_NETLINK */

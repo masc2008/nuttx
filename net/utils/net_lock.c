@@ -72,6 +72,9 @@ int net_sem_timedwait2(FAR sem_t *sem, bool interruptible,
   int          blresult2 = -ENOENT;
   int          ret;
 
+  DEBUGASSERT(sem != NULL);
+  DEBUGASSERT(mutex1 == NULL || mutex2 == NULL || mutex1 != mutex2);
+
   /* Release the network lock, remembering my count.  net_breaklock will
    * return a negated value if the caller does not hold the network lock.
    */
@@ -119,12 +122,14 @@ int net_sem_timedwait2(FAR sem_t *sem, bool interruptible,
 
   if (blresult2 >= 0)
     {
-      nxrmutex_restorelock(mutex2, count2);
+      ret = nxrmutex_restorelock(mutex2, count2);
+      DEBUGASSERT(ret >= 0);
     }
 
   if (blresult1 >= 0)
     {
-      nxrmutex_restorelock(mutex1, count1);
+      ret = nxrmutex_restorelock(mutex1, count1);
+      DEBUGASSERT(ret >= 0);
     }
 
   return ret;
