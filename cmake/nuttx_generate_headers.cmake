@@ -46,6 +46,10 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/include/arch)
   file(GLOB CONTENTS ${NUTTX_DIR}/arch/${CONFIG_ARCH}/include/*)
   foreach(ARCH_INCDIR ${CONTENTS})
     get_filename_component(SUB_ELEMENT ${ARCH_INCDIR} NAME)
+    if(SUB_ELEMENT STREQUAL "chip" OR SUB_ELEMENT STREQUAL "board")
+      continue()
+    endif()
+
     nuttx_create_symlink(${NUTTX_DIR}/arch/${CONFIG_ARCH}/include/${SUB_ELEMENT}
                          ${CMAKE_BINARY_DIR}/include/arch/${SUB_ELEMENT})
   endforeach()
