@@ -947,6 +947,206 @@ static inline void rndis_resetrxstate(FAR struct rndis_dev_s *priv)
 }
 
 /****************************************************************************
+ * Name: rndis_rxcopyin
+ *
+ * Description:
+ *   Copy a fragment of the current RX datagram into the RX IOB.
+ *
+ * Input Parameters:
+ *   priv    - pointer to RNDIS device driver structure
+ *   src     - source buffer
+ *   copysize - number of bytes to copy
+ *   offset  - destination offset in IOB
+ *
+ * Returned Value:
+ *   OK on success; a negated errno value on failure.
+ *
+ ****************************************************************************/
+
+static inline int rndis_rxcopyin(FAR struct rndis_dev_s *priv,
+                                 FAR const uint8_t *src,
+                                 size_t copysize, int offset)
+{
+  int ret;
+
+  ret = iob_trycopyin(priv->rx_req->iob, src, copysize, offset, false);
+  if (ret < 0)
+    {
+      uerr("ERROR: Failed to copy RX fragment (%d)\n", ret);
+      NETDEV_RXERRORS(&priv->netdev);
+      return ret;
+    }
+
+  return OK;
+}
+
+/****************************************************************************
+ * Name: rndis_rxstartpacket
+ *
+ * Description:
+ *   Parse the first USB fragment of a new RNDIS packet message.
+ *
+ * Input Parameters:
+ *   priv   - pointer to RNDIS device driver structure
+ *   reqbuf - USB request buffer
+ *   reqlen - USB request length
+ *
+ * Returned Value:
+ *   OK on success; a negated errno value on malformed input.
+ *
+ ****************************************************************************/
+
+static inline int rndis_rxstartpacket(FAR struct rndis_dev_s *priv,
+                                      FAR uint8_t *reqbuf, uint16_t reqlen)
+{
+  FAR struct rndis_packet_msg *msg = (FAR struct rndis_packet_msg *)reqbuf;
+  size_t datagram_offset;
+  size_t datagram_end;
+  size_t copysize;
+
+  if (reqlen < sizeof(struct rndis_packet_msg))
+    {
+      uerr("ERROR: Short RNDIS packet header (%u)\n", reqlen);
+      NETDEV_RXERRORS(&priv->netdev);
+      return -EINVAL;
+    }
+
+  if (msg->msgtype != RNDIS_PACKET_MSG)
+    {
+      uerr("Unknown RNDIS message type %" PRIu32 "\n", msg->msgtype);
+      NETDEV_RXERRORS(&priv->netdev);
+      return -EINVAL;
+    }
+
+  if (msg->msglen < sizeof(struct rndis_packet_msg))
+    {
+      uerr("ERROR: Bad RNDIS message length %" PRIu32 "\n", msg->msglen);
+      NETDEV_RXERRORS(&priv->netdev);
+      return -EINVAL;
+    }
+
+  datagram_offset = msg->dataoffset + 8;
+  datagram_end    = datagram_offset + msg->datalen;
+
+  if (datagram_offset < sizeof(struct rndis_packet_msg) ||
+      datagram_end > msg->msglen)
+    {
+      uerr("ERROR: Bad RNDIS datagram layout "
+           "(offset=%zu len=%" PRIu32 " msglen=%" PRIu32 ")\n",
+           datagram_offset, msg->datalen, msg->msglen);
+      NETDEV_RXERRORS(&priv->netdev);
+      return -EINVAL;
+    }
+
+  priv->current_rx_received        = reqlen;
+  priv->current_rx_datagram_size   = msg->datalen;
+  priv->current_rx_datagram_offset = datagram_offset;
+  priv->current_rx_msglen          = msg->msglen;
+
+  /* According to RNDIS-over-USB send, if the message length is a multiple
+   * of endpoint max packet size, the host must send an additional single-
+   * byte zero packet. Take that in account here.
+   */
+
+  if (!(priv->current_rx_msglen % priv->epbulkout->maxpacket))
+    {
+      priv->current_rx_msglen += 1;
+    }
+
+  if (datagram_offset >= reqlen)
+    {
+      return OK;
+    }
+
+  copysize = MIN((size_t)reqlen - datagram_offset,
+                 priv->current_rx_datagram_size);
+  return rndis_rxcopyin(priv, &reqbuf[datagram_offset], copysize,
+                        -NET_LL_HDRLEN(&priv->netdev));
+}
+
+/****************************************************************************
+ * Name: rndis_rxappendpacket
+ *
+ * Description:
+ *   Append a continuation fragment to the current RX datagram.
+ *
+ * Input Parameters:
+ *   priv   - pointer to RNDIS device driver structure
+ *   reqbuf - USB request buffer
+ *   reqlen - USB request length
+ *
+ * Returned Value:
+ *   OK on success; a negated errno value on malformed input.
+ *
+ ****************************************************************************/
+
+static inline int rndis_rxappendpacket(FAR struct rndis_dev_s *priv,
+                                       FAR uint8_t *reqbuf, uint16_t reqlen)
+{
+  size_t index;
+  size_t copysize;
+
+  if (priv->current_rx_received < priv->current_rx_datagram_offset ||
+      priv->current_rx_received >
+      priv->current_rx_datagram_size + priv->current_rx_datagram_offset)
+    {
+      return OK;
+    }
+
+  index    = priv->current_rx_received - priv->current_rx_datagram_offset;
+  copysize = MIN((size_t)reqlen, priv->current_rx_datagram_size - index);
+
+  if ((index + copysize) > CONFIG_NET_ETH_PKTSIZE)
+    {
+      uerr("The packet exceeds request buffer (reqlen=%d)\n", reqlen);
+      NETDEV_RXERRORS(&priv->netdev);
+      return -E2BIG;
+    }
+
+  return rndis_rxcopyin(priv, reqbuf, copysize, priv->rx_req->iob->io_pktlen);
+}
+
+/****************************************************************************
+ * Name: rndis_rxfinishpacket
+ *
+ * Description:
+ *   Finalize a fully received RNDIS packet and schedule dispatch.
+ *
+ * Input Parameters:
+ *   priv - pointer to RNDIS device driver structure
+ *
+ * Returned Value:
+ *   -EBUSY if the packet was queued for dispatch; OK if it was dropped.
+ *
+ ****************************************************************************/
+
+static inline int rndis_rxfinishpacket(FAR struct rndis_dev_s *priv)
+{
+  if (priv->current_rx_datagram_size > (CONFIG_NET_ETH_PKTSIZE + 4) ||
+      priv->current_rx_datagram_size <= (ETH_HDRLEN + 4))
+    {
+      uerr("ERROR: Bad packet size dropped (%zu)\n",
+           priv->current_rx_datagram_size);
+      NETDEV_RXERRORS(&priv->netdev);
+      rndis_resetrxstate(priv);
+      return OK;
+    }
+  else
+    {
+      int ret;
+
+      DEBUGASSERT(work_available(&priv->rxwork));
+      ret = work_queue(ETHWORK, &priv->rxwork, rndis_rxdispatch, priv, 0);
+      DEBUGASSERT(ret == 0);
+      UNUSED(ret);
+
+      rndis_block_rx(priv);
+      priv->rndis_host_tx_count++;
+      return -EBUSY;
+    }
+}
+
+/****************************************************************************
  * Name: rndis_giverxreq
  *
  * Description:
@@ -1266,6 +1466,8 @@ static int rndis_txavail(FAR struct net_driver_s *dev)
 static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
                                    FAR uint8_t *reqbuf, uint16_t reqlen)
 {
+  int ret;
+
   if (!priv->connected)
     {
       return -EBUSY;
@@ -1278,150 +1480,22 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
 
   if (!priv->current_rx_datagram_size)
     {
-      if (reqlen < 16)
-        {
-          uerr("ERROR: Short RNDIS packet header (%u)\n", reqlen);
-          NETDEV_RXERRORS(&priv->netdev);
-        }
-      else
-        {
-          /* The packet contains a RNDIS packet message header */
-
-          FAR struct rndis_packet_msg *msg =
-            (FAR struct rndis_packet_msg *)reqbuf;
-
-          if (msg->msgtype == RNDIS_PACKET_MSG)
-            {
-              size_t datagram_offset = msg->dataoffset + 8;
-              size_t datagram_end;
-              size_t copysize;
-              int ret;
-
-              if (msg->msglen < sizeof(struct rndis_packet_msg))
-                {
-                  uerr("ERROR: Bad RNDIS message length %" PRIu32 "\n",
-                       msg->msglen);
-                  NETDEV_RXERRORS(&priv->netdev);
-                  goto errout;
-                }
-
-              /* According to RNDIS-over-USB send, if the message length is a
-               * multiple of endpoint max packet size, the host must send an
-               * additional single-byte zero packet. Take that in account
-               * here.
-               */
-
-              priv->current_rx_msglen = msg->msglen;
-              if (!(priv->current_rx_msglen % priv->epbulkout->maxpacket))
-                {
-                  priv->current_rx_msglen += 1;
-                }
-
-              /* Data offset is defined as an offset from the beginning of
-               * the offset field itself
-               */
-
-              datagram_end = datagram_offset + msg->datalen;
-              if (datagram_offset < sizeof(struct rndis_packet_msg) ||
-                  datagram_end > msg->msglen)
-                {
-                  uerr("ERROR: Bad RNDIS datagram layout "
-                       "(offset=%zu len=%" PRIu32 " msglen=%" PRIu32 ")\n",
-                       datagram_offset, msg->datalen, msg->msglen);
-                  NETDEV_RXERRORS(&priv->netdev);
-                  goto errout;
-                }
-
-              priv->current_rx_received = reqlen;
-              priv->current_rx_datagram_size = msg->datalen;
-              priv->current_rx_datagram_offset = datagram_offset;
-
-              if (priv->current_rx_datagram_offset < reqlen)
-                {
-                  copysize = MIN((size_t)reqlen - priv->current_rx_datagram_offset,
-                                 priv->current_rx_datagram_size);
-                  ret = iob_trycopyin(priv->rx_req->iob,
-                                      &reqbuf[priv->current_rx_datagram_offset],
-                                      copysize,
-                                      -NET_LL_HDRLEN(&priv->netdev), false);
-                  if (ret < 0)
-                    {
-                      uerr("ERROR: Failed to copy first RX fragment (%d)\n",
-                           ret);
-                      NETDEV_RXERRORS(&priv->netdev);
-                      goto errout;
-                    }
-                }
-            }
-          else
-            {
-              uerr("Unknown RNDIS message type %" PRIu32 "\n", msg->msgtype);
-              NETDEV_RXERRORS(&priv->netdev);
-            }
-        }
+      ret = rndis_rxstartpacket(priv, reqbuf, reqlen);
     }
   else
     {
-      if (priv->current_rx_received >= priv->current_rx_datagram_offset &&
-          priv->current_rx_received <= priv->current_rx_datagram_size +
-          priv->current_rx_datagram_offset)
-        {
-          size_t index = priv->current_rx_received -
-                         priv->current_rx_datagram_offset;
-          size_t copysize = MIN(reqlen,
-                                priv->current_rx_datagram_size - index);
-          int ret;
-
-          /* Check if the received packet exceeds request buffer */
-
-          if ((index + copysize) <= CONFIG_NET_ETH_PKTSIZE)
-            {
-              ret = iob_trycopyin(priv->rx_req->iob, reqbuf, copysize,
-                                  priv->rx_req->iob->io_pktlen, false);
-              if (ret < 0)
-                {
-                  uerr("ERROR: Failed to copy RX fragment (%d)\n", ret);
-                  NETDEV_RXERRORS(&priv->netdev);
-                  goto errout;
-                }
-            }
-          else
-            {
-              uerr("The packet exceeds request buffer (reqlen=%d)\n",
-                   reqlen);
-              NETDEV_RXERRORS(&priv->netdev);
-              goto errout;
-            }
-        }
+      ret = rndis_rxappendpacket(priv, reqbuf, reqlen);
       priv->current_rx_received += reqlen;
+    }
+
+  if (ret < 0)
+    {
+      goto errout;
     }
 
   if (priv->current_rx_received >= priv->current_rx_msglen)
     {
-      /* Check for a usable packet length (4 added for the CRC) */
-
-      if (priv->current_rx_datagram_size > (CONFIG_NET_ETH_PKTSIZE + 4) ||
-          priv->current_rx_datagram_size <= (ETH_HDRLEN + 4))
-        {
-          uerr("ERROR: Bad packet size dropped (%zu)\n",
-               priv->current_rx_datagram_size);
-          NETDEV_RXERRORS(&priv->netdev);
-          priv->current_rx_datagram_size = 0;
-        }
-      else
-        {
-          int ret;
-
-          DEBUGASSERT(work_available(&priv->rxwork));
-          ret = work_queue(ETHWORK, &priv->rxwork, rndis_rxdispatch,
-                           priv, 0);
-          DEBUGASSERT(ret == 0);
-          UNUSED(ret);
-
-          rndis_block_rx(priv);
-          priv->rndis_host_tx_count++;
-          return -EBUSY;
-        }
+      return rndis_rxfinishpacket(priv);
     }
 
   return OK;
