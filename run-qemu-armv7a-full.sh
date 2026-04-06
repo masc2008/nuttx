@@ -15,14 +15,10 @@ elif [[ -x /home/hma/open-vela/vela-opensource/prebuilts/qemu/linux-x86_64/bin/q
 else
   QEMU_BIN="qemu-system-arm"
 fi
-MACHINE="${QEMU_MACHINE:-virt,gic-version=2}"
+MACHINE="${QEMU_MACHINE:-virt,virtualization=off,gic-version=2}"
 CPU="${QEMU_CPU:-cortex-a7}"
 MEMORY="${QEMU_MEMORY:-256M}"
 SMP_CPUS="${QEMU_SMP:-1}"
-IPV4_NET="${QEMU_IPV4_NET:-10.0.2.0/24}"
-IPV4_HOST="${QEMU_IPV4_HOST:-10.0.2.2}"
-IPV6_NET="${QEMU_IPV6_NET:-fd00::/64}"
-IPV6_HOST="${QEMU_IPV6_HOST:-fd00::2}"
 
 usage() {
   cat <<EOF
@@ -34,10 +30,6 @@ Environment overrides:
   QEMU_CPU      CPU model             (default: cortex-a7)
   QEMU_MEMORY   Guest RAM size        (default: 256M)
   QEMU_SMP      Number of CPUs        (default: 1)
-  QEMU_IPV4_NET IPv4 usernet subnet   (default: 10.0.2.0/24)
-  QEMU_IPV4_HOST IPv4 usernet host    (default: 10.0.2.2)
-  QEMU_IPV6_NET IPv6 usernet subnet   (default: fd00::/64)
-  QEMU_IPV6_HOST IPv6 usernet host    (default: fd00::2)
 
 Options:
   --gdb         Start paused with a GDB stub on tcp::1234.
@@ -86,9 +78,12 @@ QEMU_ARGS=(
   -smp "${SMP_CPUS}"
   -nographic
   -no-reboot
+  -chardev stdio,id=con,mux=on
+  -serial chardev:con
   -global virtio-mmio.force-legacy=false
-  -netdev user,id=u1,ipv4=on,net="${IPV4_NET}",host="${IPV4_HOST}",ipv6=on,ipv6-net="${IPV6_NET}",ipv6-host="${IPV6_HOST}"
-  -device virtio-net-device,netdev=u1,mac=52:54:00:12:34:56,bus=virtio-mmio-bus.0
+  -netdev user,id=u1,ipv4=on,net=10.0.2.0/24,host=10.0.2.2,ipv6=on,ipv6-net=fd00::/64,ipv6-host=fd00::2,hostfwd=tcp:127.0.0.1:10023-10.0.2.15:23,hostfwd=tcp:127.0.0.1:15001-10.0.2.15:5001
+  -device virtio-net-device,netdev=u1,bus=virtio-mmio-bus.0
+  -mon chardev=con,mode=readline
   -kernel "${IMAGE}"
 )
 

@@ -44,6 +44,12 @@
 
 #ifdef CONFIG_NET_ICMPv6_ROUTER
 
+#if defined(CONFIG_NET_ETHERNET) || defined(CONFIG_NET_6LOWPAN) || \
+    defined(CONFIG_NET_BLUETOOTH) || defined(CONFIG_NET_IEEE802154) || \
+    defined(CONFIG_NET_TUN)
+#  define HAVE_ICMPV6_LLADDR_STORAGE 1
+#endif
+
 /****************************************************************************
  * Private Types
  ****************************************************************************/
@@ -221,7 +227,9 @@ void icmpv6_radvertise(FAR struct net_driver_s *dev)
                       sizeof(struct icmpv6_router_advertise_s));
   srcaddr->opttype  = ICMPv6_OPT_SRCLLADDR;
   srcaddr->optlen   = ICMPv6_OPT_OCTECTS(lladdrsize);
+#ifdef HAVE_ICMPV6_LLADDR_STORAGE
   memcpy(srcaddr->srclladdr, &dev->d_mac, lladdrsize);
+#endif
 
   /* Set up the MTU option */
 

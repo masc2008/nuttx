@@ -42,6 +42,12 @@
 
 #ifdef CONFIG_NET_ICMPv6
 
+#if defined(CONFIG_NET_ETHERNET) || defined(CONFIG_NET_6LOWPAN) || \
+    defined(CONFIG_NET_BLUETOOTH) || defined(CONFIG_NET_IEEE802154) || \
+    defined(CONFIG_NET_TUN)
+#  define HAVE_ICMPV6_LLADDR_STORAGE 1
+#endif
+
 /****************************************************************************
  * Private Data
  ****************************************************************************/
@@ -120,7 +126,9 @@ void icmpv6_solicit(FAR struct net_driver_s *dev,
 
   /* Copy our link layer address into the message */
 
+#ifdef HAVE_ICMPV6_LLADDR_STORAGE
   memcpy(sol->srclladdr, &dev->d_mac, lladdrsize);
+#endif
 
   /* Update device buffer length */
 

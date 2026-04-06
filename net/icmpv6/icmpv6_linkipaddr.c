@@ -32,6 +32,12 @@
 
 #ifdef CONFIG_NET_ICMPv6
 
+#if defined(CONFIG_NET_ETHERNET) || defined(CONFIG_NET_6LOWPAN) || \
+    defined(CONFIG_NET_BLUETOOTH) || defined(CONFIG_NET_IEEE802154) || \
+    defined(CONFIG_NET_TUN)
+#  define HAVE_ICMPV6_LLADDR_STORAGE 1
+#endif
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
@@ -161,6 +167,7 @@ void icmpv6_linkipaddr(FAR struct net_driver_s *dev, net_ipv6addr_t ipaddr)
 {
   switch (netdev_lladdrsize(dev))
     {
+#ifdef HAVE_ICMPV6_LLADDR_STORAGE
       case 1:
         icmpv6_linkipaddr_1(&dev->d_mac, ipaddr);
         break;
@@ -176,6 +183,7 @@ void icmpv6_linkipaddr(FAR struct net_driver_s *dev, net_ipv6addr_t ipaddr)
       case 8:
         icmpv6_linkipaddr_8(&dev->d_mac, ipaddr);
         break;
+#endif
 
       default:
         icmpv6_linkipaddr_0(dev, ipaddr);

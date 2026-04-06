@@ -36,6 +36,12 @@
 #include "netdev/netdev.h"
 #include "neighbor/neighbor.h"
 
+#if defined(CONFIG_NET_ETHERNET) || defined(CONFIG_NET_6LOWPAN) || \
+    defined(CONFIG_NET_BLUETOOTH) || defined(CONFIG_NET_IEEE802154) || \
+    defined(CONFIG_NET_TUN)
+#  define HAVE_NEIGHBOR_LLADDR_STORAGE 1
+#endif
+
 /****************************************************************************
  * Private Types
  ****************************************************************************/
@@ -81,7 +87,9 @@ static int neighbor_match(FAR struct net_driver_s *dev, FAR void *arg)
     {
       info->ni_laddr->na_lltype = dev->d_lltype;
       info->ni_laddr->na_llsize = netdev_lladdrsize(dev);
+#ifdef HAVE_NEIGHBOR_LLADDR_STORAGE
       memcpy(&info->ni_laddr->u, &dev->d_mac, info->ni_laddr->na_llsize);
+#endif
     }
 
   /* Return success in any event */

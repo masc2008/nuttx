@@ -602,6 +602,7 @@ static int virtio_net_init(FAR struct virtio_net_priv_s *priv,
                      (VIRTIO_NET_MAX_NIOB + 1), priv->bufnum);
   priv->bufnum = MIN(vdev->vrings_info[VIRTIO_NET_TX].info.num_descs /
                      (VIRTIO_NET_MAX_NIOB + 1), priv->bufnum);
+  priv->bufnum = MAX(priv->bufnum, 1);
   return OK;
 }
 

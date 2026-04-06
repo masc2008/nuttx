@@ -31,6 +31,7 @@
 
 #include <nuttx/fs/fs.h>
 #include <nuttx/fdt.h>
+#include <nuttx/net/slip.h>
 #include <nuttx/rpmsg/rpmsg_port.h>
 
 #ifdef CONFIG_LIBC_FDT
@@ -46,6 +47,14 @@
 
 #ifndef QEMU_SPI_IRQ_BASE
 #define QEMU_SPI_IRQ_BASE     32
+#endif
+
+#ifdef CONFIG_NET_SLIP
+#  ifdef CONFIG_DRIVERS_VIRTIO_SERIAL
+#    define QEMU_SLIP_DEVPATH "/dev/ttyV0"
+#  else
+#    define QEMU_SLIP_DEVPATH "/dev/ttyS1"
+#  endif
 #endif
 
 /****************************************************************************
@@ -194,6 +203,15 @@ int qemu_bringup(void)
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: Failed to mount littlefs at /data: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_NET_SLIP
+  ret = slip_initialize(0, QEMU_SLIP_DEVPATH);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize SLIP on %s: %d\n",
+             QEMU_SLIP_DEVPATH, ret);
     }
 #endif
 
