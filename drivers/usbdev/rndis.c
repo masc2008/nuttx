@@ -925,6 +925,28 @@ static bool rndis_allocrxreq(FAR struct rndis_dev_s *priv)
 }
 
 /****************************************************************************
+ * Name: rndis_resetrxstate
+ *
+ * Description:
+ *   Reset the in-progress RX message state.
+ *
+ * Input Parameters:
+ *   priv: pointer to RNDIS device driver structure
+ *
+ * Assumptions:
+ *   Called from critical section
+ *
+ ****************************************************************************/
+
+static inline void rndis_resetrxstate(FAR struct rndis_dev_s *priv)
+{
+  priv->current_rx_received        = 0;
+  priv->current_rx_datagram_size   = 0;
+  priv->current_rx_datagram_offset = 0;
+  priv->current_rx_msglen          = 0;
+}
+
+/****************************************************************************
  * Name: rndis_giverxreq
  *
  * Description:
@@ -1244,21 +1266,22 @@ static int rndis_txavail(FAR struct net_driver_s *dev)
 static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
                                    FAR uint8_t *reqbuf, uint16_t reqlen)
 {
-  if (!rndis_allocrxreq(priv))
-    {
-      return -ENOMEM;
-    }
-
   if (!priv->connected)
     {
       return -EBUSY;
+    }
+
+  if (!rndis_allocrxreq(priv))
+    {
+      return -ENOMEM;
     }
 
   if (!priv->current_rx_datagram_size)
     {
       if (reqlen < 16)
         {
-          /* Packet too small to contain a message header */
+          uerr("ERROR: Short RNDIS packet header (%u)\n", reqlen);
+          NETDEV_RXERRORS(&priv->netdev);
         }
       else
         {
@@ -1266,11 +1289,21 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
 
           FAR struct rndis_packet_msg *msg =
             (FAR struct rndis_packet_msg *)reqbuf;
+
           if (msg->msgtype == RNDIS_PACKET_MSG)
             {
-              priv->current_rx_received = reqlen;
-              priv->current_rx_datagram_size = msg->datalen;
-              priv->current_rx_msglen = msg->msglen;
+              size_t datagram_offset = msg->dataoffset + 8;
+              size_t datagram_end;
+              size_t copysize;
+              int ret;
+
+              if (msg->msglen < sizeof(struct rndis_packet_msg))
+                {
+                  uerr("ERROR: Bad RNDIS message length %" PRIu32 "\n",
+                       msg->msglen);
+                  NETDEV_RXERRORS(&priv->netdev);
+                  goto errout;
+                }
 
               /* According to RNDIS-over-USB send, if the message length is a
                * multiple of endpoint max packet size, the host must send an
@@ -1278,6 +1311,7 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
                * here.
                */
 
+              priv->current_rx_msglen = msg->msglen;
               if (!(priv->current_rx_msglen % priv->epbulkout->maxpacket))
                 {
                   priv->current_rx_msglen += 1;
@@ -1287,18 +1321,42 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
                * the offset field itself
                */
 
-              priv->current_rx_datagram_offset = msg->dataoffset + 8;
+              datagram_end = datagram_offset + msg->datalen;
+              if (datagram_offset < sizeof(struct rndis_packet_msg) ||
+                  datagram_end > msg->msglen)
+                {
+                  uerr("ERROR: Bad RNDIS datagram layout "
+                       "(offset=%zu len=%" PRIu32 " msglen=%" PRIu32 ")\n",
+                       datagram_offset, msg->datalen, msg->msglen);
+                  NETDEV_RXERRORS(&priv->netdev);
+                  goto errout;
+                }
+
+              priv->current_rx_received = reqlen;
+              priv->current_rx_datagram_size = msg->datalen;
+              priv->current_rx_datagram_offset = datagram_offset;
+
               if (priv->current_rx_datagram_offset < reqlen)
                 {
-                  iob_trycopyin(priv->rx_req->iob,
-                                &reqbuf[priv->current_rx_datagram_offset],
-                                reqlen - priv->current_rx_datagram_offset,
-                                -NET_LL_HDRLEN(&priv->netdev), false);
+                  copysize = MIN((size_t)reqlen - priv->current_rx_datagram_offset,
+                                 priv->current_rx_datagram_size);
+                  ret = iob_trycopyin(priv->rx_req->iob,
+                                      &reqbuf[priv->current_rx_datagram_offset],
+                                      copysize,
+                                      -NET_LL_HDRLEN(&priv->netdev), false);
+                  if (ret < 0)
+                    {
+                      uerr("ERROR: Failed to copy first RX fragment (%d)\n",
+                           ret);
+                      NETDEV_RXERRORS(&priv->netdev);
+                      goto errout;
+                    }
                 }
             }
           else
             {
               uerr("Unknown RNDIS message type %" PRIu32 "\n", msg->msgtype);
+              NETDEV_RXERRORS(&priv->netdev);
             }
         }
     }
@@ -1312,18 +1370,27 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
                          priv->current_rx_datagram_offset;
           size_t copysize = MIN(reqlen,
                                 priv->current_rx_datagram_size - index);
+          int ret;
 
           /* Check if the received packet exceeds request buffer */
 
           if ((index + copysize) <= CONFIG_NET_ETH_PKTSIZE)
             {
-              iob_trycopyin(priv->rx_req->iob, reqbuf, copysize,
-                            priv->rx_req->iob->io_pktlen, false);
+              ret = iob_trycopyin(priv->rx_req->iob, reqbuf, copysize,
+                                  priv->rx_req->iob->io_pktlen, false);
+              if (ret < 0)
+                {
+                  uerr("ERROR: Failed to copy RX fragment (%d)\n", ret);
+                  NETDEV_RXERRORS(&priv->netdev);
+                  goto errout;
+                }
             }
           else
             {
               uerr("The packet exceeds request buffer (reqlen=%d)\n",
                    reqlen);
+              NETDEV_RXERRORS(&priv->netdev);
+              goto errout;
             }
         }
       priv->current_rx_received += reqlen;
@@ -1357,6 +1424,10 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
         }
     }
 
+  return OK;
+
+errout:
+  rndis_resetrxstate(priv);
   return OK;
 }
 
