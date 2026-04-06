@@ -5,16 +5,35 @@ set -euo pipefail
 ROOT_DIR="/home/hma/nuttx"
 BUILD_DIR="${ROOT_DIR}/build-qemu-armv7a-full"
 IMAGE="${BUILD_DIR}/nuttx"
+OPENVELA_ROOT="${OPENVELA_ROOT:-/home/hma/open-vela/vela-opensource}"
 
-if [[ -n "${QEMU_BIN:-}" ]]; then
-  QEMU_BIN="${QEMU_BIN}"
-elif command -v qemu-system-arm >/dev/null 2>&1; then
-  QEMU_BIN="$(command -v qemu-system-arm)"
-elif [[ -x /home/hma/open-vela/vela-opensource/prebuilts/qemu/linux-x86_64/bin/qemu-system-arm ]]; then
-  QEMU_BIN="/home/hma/open-vela/vela-opensource/prebuilts/qemu/linux-x86_64/bin/qemu-system-arm"
-else
-  QEMU_BIN="qemu-system-arm"
-fi
+host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+host_arch="$(uname -m)"
+
+case "${host_arch}" in
+  aarch64|arm64)
+    host_arch="aarch64"
+    ;;
+  x86_64)
+    host_arch="x86_64"
+    ;;
+esac
+
+OPENVELA_QEMU_BIN="${OPENVELA_ROOT}/prebuilts/qemu/${host_os}-${host_arch}/bin/qemu-system-arm"
+
+resolve_qemu_bin() {
+  if [[ -n "${QEMU_BIN:-}" ]]; then
+    printf '%s\n' "${QEMU_BIN}"
+  elif [[ -x "${OPENVELA_QEMU_BIN}" ]]; then
+    printf '%s\n' "${OPENVELA_QEMU_BIN}"
+  elif command -v qemu-system-arm >/dev/null 2>&1; then
+    command -v qemu-system-arm
+  else
+    printf '%s\n' "qemu-system-arm"
+  fi
+}
+
+QEMU_BIN="$(resolve_qemu_bin)"
 MACHINE="${QEMU_MACHINE:-virt,virtualization=off,gic-version=2}"
 CPU="${QEMU_CPU:-cortex-a7}"
 MEMORY="${QEMU_MEMORY:-256M}"
@@ -25,7 +44,8 @@ usage() {
 Usage: $(basename "$0") [--gdb] [--image PATH] [extra qemu args...]
 
 Environment overrides:
-  QEMU_BIN      QEMU executable to use (default: qemu-system-arm)
+  QEMU_BIN      QEMU executable to use
+  OPENVELA_ROOT OpenVela root used to resolve prebuilts/qemu host binary
   QEMU_MACHINE  QEMU machine type     (default: virt,gic-version=2)
   QEMU_CPU      CPU model             (default: cortex-a7)
   QEMU_MEMORY   Guest RAM size        (default: 256M)
@@ -67,7 +87,7 @@ fi
 
 if ! command -v "${QEMU_BIN}" >/dev/null 2>&1; then
   echo "QEMU not found: ${QEMU_BIN}" >&2
-  echo "Set QEMU_BIN=/full/path/to/qemu-system-arm if it is not on PATH." >&2
+  echo "Set QEMU_BIN=/full/path/to/qemu-system-arm or OPENVELA_ROOT=/path/to/open-vela." >&2
   exit 1
 fi
 
