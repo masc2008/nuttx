@@ -78,7 +78,11 @@
 #define CONFIG_RNDIS_EP0MAXPACKET 64
 
 #ifndef CONFIG_RNDIS_NWRREQS
-#  define CONFIG_RNDIS_NWRREQS  (2)
+#  define CONFIG_RNDIS_NWRREQS  (8)
+#endif
+
+#ifndef CONFIG_RNDIS_NRDREQS
+#  define CONFIG_RNDIS_NRDREQS  (4)
 #endif
 
 #define RNDIS_PACKET_HDR_SIZE   (sizeof(struct rndis_packet_msg))
@@ -139,6 +143,13 @@ struct rndis_req_s
   FAR uint8_t             *buf;    /* Use malloc buffer when config IOB_LEN < CONFIG_RNDIS_BULKIN_REQLEN */
 };
 
+struct rndis_rdreq_s
+{
+  FAR struct rndis_rdreq_s *flink; /* Implements a singly linked list */
+  FAR struct usbdev_req_s  *req;   /* The contained request */
+  bool submitted;                  /* True: request is active on epbulkout */
+};
+
 /* This structure describes the internal state of the driver */
 
 struct rndis_dev_s
@@ -152,24 +163,24 @@ struct rndis_dev_s
   FAR struct usbdev_ep_s  *epbulkout;    /* Bulk OUT endpoint structure */
   FAR struct usbdev_req_s *ctrlreq;      /* Pointer to preallocated control request */
   FAR struct usbdev_req_s *epintin_req;  /* Pointer to preallocated interrupt in endpoint request */
-  FAR struct usbdev_req_s *rdreq;        /* Pointer to Preallocated control endpoint read request */
   struct sq_queue_s reqlist;             /* List of free write request containers */
+  struct iob_queue_s rxdone;             /* Queue of completed RX packets */
 
   /* Preallocated USB request buffers */
 
   struct rndis_req_s wrreqs[CONFIG_RNDIS_NWRREQS];
+  struct rndis_rdreq_s rdreqs[CONFIG_RNDIS_NRDREQS];
 
   struct work_s rxwork;                  /* Worker for dispatching RX packets */
   struct work_s pollwork;                /* TX poll worker */
 
   uint8_t config;                        /* USB Configuration number */
   FAR struct rndis_req_s *net_req;       /* Pointer to request whose buffer is assigned to network */
-  FAR struct rndis_req_s *rx_req;        /* Pointer request container that holds RX buffer */
+  FAR struct iob_s *rx_req;              /* Current RX packet under assembly */
   size_t current_rx_received;            /* Number of bytes of current RX datagram received over USB */
   size_t current_rx_datagram_size;       /* Total number of bytes of the current RX datagram */
   size_t current_rx_datagram_offset;     /* Offset of current RX datagram */
   size_t current_rx_msglen;              /* Length of the entire message to be received */
-  bool rdreq_submitted;                  /* Indicates if the read request is submitted */
   bool rx_blocked;                       /* Indicates if we can receive packets on bulk in endpoint */
   bool connected;                        /* Connection status indicator */
   uint32_t rndis_packet_filter;          /* RNDIS packet filter value */
@@ -552,17 +563,16 @@ static const struct rndis_oid_value_s g_rndis_oid_values[] =
  * requests along with buffers large enough to hold an Ethernet packet and
  * the corresponding RNDIS header.
  *
- * One of these is always reserved for packet reception - when data arrives
- * on the bulk OUT endpoint, it is copied to the reserved request buffer.
- * When the reception of an Ethernet packet is complete, a worker to process
- * the packet is scheduled and bulk OUT endpoint is set to NAK.
+ * Packet reception uses multiple posted bulk OUT requests. Incoming USB
+ * fragments are copied into the current assembly buffer. Once an Ethernet
+ * packet is complete, it is queued for worker processing and a new assembly
+ * buffer is allocated immediately if one is available.
  *
- * The processing worker passes the buffer to the network. When the network
- * is done processing the packet, the buffer might contain data to be sent.
- * If so, the corresponding write request is queued on the bulk IN endpoint.
- * The NAK state on bulk OUT endpoint is cleared to allow new packets to
- * arrive. If there's no data to send, the request is returned to the list of
- * free requests.
+ * The processing worker drains the RX-done queue and passes each packet to
+ * the network. When the network is done processing the packet, the buffer
+ * might contain data to be sent. If so, the corresponding write request is
+ * queued on the bulk IN endpoint. If there's no data to send, the request is
+ * returned to the list of free requests.
  *
  * When a bulk IN write operation is complete, the request is added to the
  * list of free requests.
@@ -573,8 +583,7 @@ static const struct rndis_oid_value_s g_rndis_oid_values[] =
  * Name: rndis_submit_rdreq
  *
  * Description:
- *   Submits the bulk OUT read request. Takes care not to submit the request
- *   when the RX packet buffer is already in use.
+ *   Submit all idle bulk OUT read requests while RX is enabled.
  *
  * Input Parameters:
  *   priv: pointer to RNDIS device driver structure
@@ -587,20 +596,30 @@ static const struct rndis_oid_value_s g_rndis_oid_values[] =
 static int rndis_submit_rdreq(FAR struct rndis_dev_s *priv)
 {
   irqstate_t flags = enter_critical_section();
+  FAR struct rndis_rdreq_s *rdreq;
   int ret = OK;
+  int i;
 
-  if (!priv->rdreq_submitted && !priv->rx_blocked)
+  if (!priv->rx_blocked)
     {
-      priv->rdreq->len = priv->epbulkout->maxpacket;
-      ret = EP_SUBMIT(priv->epbulkout, priv->rdreq);
-      if (ret != OK)
+      for (i = 0; i < CONFIG_RNDIS_NRDREQS; i++)
         {
-          usbtrace(TRACE_CLSERROR(USBSER_TRACEERR_RDSUBMIT),
-                   (uint16_t)-priv->rdreq->result);
-        }
-      else
-        {
-          priv->rdreq_submitted = true;
+          rdreq = &priv->rdreqs[i];
+          if (rdreq->submitted)
+            {
+              continue;
+            }
+
+          rdreq->req->len = priv->epbulkout->maxpacket;
+          ret = EP_SUBMIT(priv->epbulkout, rdreq->req);
+          if (ret != OK)
+            {
+              usbtrace(TRACE_CLSERROR(USBSER_TRACEERR_RDSUBMIT),
+                       (uint16_t)-rdreq->req->result);
+              break;
+            }
+
+          rdreq->submitted = true;
         }
     }
 
@@ -622,10 +641,15 @@ static int rndis_submit_rdreq(FAR struct rndis_dev_s *priv)
 static void rndis_cancel_rdreq(FAR struct rndis_dev_s *priv)
 {
   irqstate_t flags = enter_critical_section();
-  if (priv->rdreq_submitted)
+  int i;
+
+  for (i = 0; i < CONFIG_RNDIS_NRDREQS; i++)
     {
-      EP_CANCEL(priv->epbulkout, priv->rdreq);
-      priv->rdreq_submitted = false;
+      if (priv->rdreqs[i].submitted)
+        {
+          EP_CANCEL(priv->epbulkout, priv->rdreqs[i].req);
+          priv->rdreqs[i].submitted = false;
+        }
     }
 
   leave_critical_section(flags);
@@ -668,6 +692,7 @@ static void rndis_block_rx(FAR struct rndis_dev_s *priv)
 static void rndis_unblock_rx(FAR struct rndis_dev_s *priv)
 {
   priv->rx_blocked = false;
+  rndis_submit_rdreq(priv);
 }
 
 /****************************************************************************
@@ -712,7 +737,7 @@ static FAR struct rndis_req_s *rndis_allocwrreq(FAR struct rndis_dev_s *priv)
 
 static bool rndis_hasfreereqs(FAR struct rndis_dev_s *priv)
 {
-  return sq_count(&priv->reqlist) > 1;
+  return !sq_empty(&priv->reqlist);
 }
 
 /****************************************************************************
@@ -907,21 +932,40 @@ static bool rndis_allocrxreq(FAR struct rndis_dev_s *priv)
   iob = iob_tryalloc(false);
   if (iob == NULL)
     {
+      priv->rx_blocked = true;
       return false;
     }
 
   iob_reserve(iob, CONFIG_NET_LL_GUARDSIZE);
 
-  if ((priv->rx_req = rndis_allocwrreq(priv)) == NULL)
-    {
-      iob_free_chain(iob);
-      return false;
-    }
-
-  priv->rx_req->iob = iob;
-  rndis_iob2buf(priv, priv->rx_req);
+  priv->rx_req = iob;
+  priv->rx_blocked = false;
 
   return true;
+}
+
+/****************************************************************************
+ * Name: rndis_freerxreq
+ *
+ * Description:
+ *   Drop the current RX assembly buffer and return its request container to
+ *   the free list.
+ *
+ * Input Parameters:
+ *   priv: pointer to RNDIS device driver structure
+ *
+ * Assumptions:
+ *   Called from critical section
+ *
+ ****************************************************************************/
+
+static void rndis_freerxreq(FAR struct rndis_dev_s *priv)
+{
+  if (priv->rx_req != NULL)
+    {
+      iob_free_chain(priv->rx_req);
+      priv->rx_req = NULL;
+    }
 }
 
 /****************************************************************************
@@ -969,7 +1013,7 @@ static inline int rndis_rxcopyin(FAR struct rndis_dev_s *priv,
 {
   int ret;
 
-  ret = iob_trycopyin(priv->rx_req->iob, src, copysize, offset, false);
+  ret = iob_trycopyin(priv->rx_req, src, copysize, offset, false);
   if (ret < 0)
     {
       uerr("ERROR: Failed to copy RX fragment (%d)\n", ret);
@@ -1103,7 +1147,7 @@ static inline int rndis_rxappendpacket(FAR struct rndis_dev_s *priv,
       return -E2BIG;
     }
 
-  return rndis_rxcopyin(priv, reqbuf, copysize, priv->rx_req->iob->io_pktlen);
+  return rndis_rxcopyin(priv, reqbuf, copysize, priv->rx_req->io_pktlen);
 }
 
 /****************************************************************************
@@ -1129,20 +1173,50 @@ static inline int rndis_rxfinishpacket(FAR struct rndis_dev_s *priv)
            priv->current_rx_datagram_size);
       NETDEV_RXERRORS(&priv->netdev);
       rndis_resetrxstate(priv);
+      rndis_freerxreq(priv);
+      if (!rndis_allocrxreq(priv))
+        {
+          rndis_block_rx(priv);
+        }
       return OK;
     }
   else
     {
       int ret;
 
-      DEBUGASSERT(work_available(&priv->rxwork));
-      ret = work_queue(ETHWORK, &priv->rxwork, rndis_rxdispatch, priv, 0);
-      DEBUGASSERT(ret == 0);
-      UNUSED(ret);
+      DEBUGASSERT(priv->rx_req != NULL);
+      ret = iob_add_queue(priv->rx_req, &priv->rxdone);
+      if (ret < 0)
+        {
+          uerr("ERROR: Failed to queue RX packet (%d)\n", ret);
+          NETDEV_RXERRORS(&priv->netdev);
+          rndis_freerxreq(priv);
+          rndis_resetrxstate(priv);
+          if (!rndis_allocrxreq(priv))
+            {
+              rndis_block_rx(priv);
+            }
 
-      rndis_block_rx(priv);
+          return OK;
+        }
+
+      priv->rx_req = NULL;
       priv->rndis_host_tx_count++;
-      return -EBUSY;
+      rndis_resetrxstate(priv);
+
+      if (!rndis_allocrxreq(priv))
+        {
+          rndis_block_rx(priv);
+        }
+
+      if (work_available(&priv->rxwork))
+        {
+          ret = work_queue(ETHWORK, &priv->rxwork, rndis_rxdispatch, priv, 0);
+          DEBUGASSERT(ret == 0);
+          UNUSED(ret);
+        }
+
+      return OK;
     }
 }
 
@@ -1160,21 +1234,17 @@ static inline int rndis_rxfinishpacket(FAR struct rndis_dev_s *priv)
  *
  ****************************************************************************/
 
-static void rndis_giverxreq(FAR struct rndis_dev_s *priv)
+static void rndis_giverxreq(FAR struct rndis_dev_s *priv,
+                            FAR struct iob_s *rx_req)
 {
-  DEBUGASSERT(priv->rx_req != NULL);
-  DEBUGASSERT(priv->net_req == NULL);
+  DEBUGASSERT(rx_req != NULL);
 
-  priv->net_req = priv->rx_req;
-  priv->rx_req  = NULL;
-
-  /* Move iob from net_req to netdev */
+  /* Move iob from RX packet to netdev */
 
   netdev_iob_release(&priv->netdev);
 
-  priv->netdev.d_iob = priv->net_req->iob;
-  priv->netdev.d_len = priv->net_req->iob->io_pktlen;
-  priv->net_req->iob = NULL;
+  priv->netdev.d_iob = rx_req;
+  priv->netdev.d_len = rx_req->io_pktlen;
 }
 
 /****************************************************************************
@@ -1241,85 +1311,86 @@ static uint16_t rndis_fillrequest(FAR struct rndis_dev_s *priv,
 static void rndis_rxdispatch(FAR void *arg)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)arg;
+  FAR struct iob_s *rx_req;
   FAR struct eth_hdr_s *hdr;
   irqstate_t flags;
 
   netdev_lock(&priv->netdev);
-  flags = enter_critical_section();
-  rndis_giverxreq(priv);
-  priv->netdev.d_len = priv->current_rx_datagram_size;
-  leave_critical_section(flags);
 
-  hdr = (FAR struct eth_hdr_s *)
-    &priv->netdev.d_iob->io_data[CONFIG_NET_LL_GUARDSIZE -
-                                 NET_LL_HDRLEN(&priv->netdev)];
+  for (; ; )
+    {
+      flags = enter_critical_section();
+      rx_req = iob_remove_queue(&priv->rxdone);
+      leave_critical_section(flags);
 
-  /* We only accept IP packets of the configured type and ARP packets */
+      if (rx_req == NULL)
+        {
+          break;
+        }
+
+      rndis_giverxreq(priv, rx_req);
+
+      hdr = (FAR struct eth_hdr_s *)
+        &priv->netdev.d_iob->io_data[CONFIG_NET_LL_GUARDSIZE -
+                                     NET_LL_HDRLEN(&priv->netdev)];
+
+      /* We only accept IP packets of the configured type and ARP packets */
 
 #ifdef CONFIG_NET_IPv4
-  if (hdr->type == HTONS(ETHTYPE_IP))
-    {
-      NETDEV_RXIPV4(&priv->netdev);
-
-      /* Receive an IPv4 packet from the network device */
-
-      ipv4_input(&priv->netdev);
-
-      if (priv->netdev.d_len > 0)
+      if (hdr->type == HTONS(ETHTYPE_IP))
         {
-          /* And send the packet */
+          NETDEV_RXIPV4(&priv->netdev);
+          ipv4_input(&priv->netdev);
 
-          rndis_transmit(priv);
+          if (priv->netdev.d_len > 0)
+            {
+              rndis_transmit(priv);
+            }
         }
-    }
-  else
+      else
 #endif
 #ifdef CONFIG_NET_IPv6
-  if (hdr->type == HTONS(ETHTYPE_IP6))
-    {
-      NETDEV_RXIPV6(&priv->netdev);
-
-      /* Give the IPv6 packet to the network layer */
-
-      ipv6_input(&priv->netdev);
-
-      if (priv->netdev.d_len > 0)
+      if (hdr->type == HTONS(ETHTYPE_IP6))
         {
-          /* And send the packet */
+          NETDEV_RXIPV6(&priv->netdev);
+          ipv6_input(&priv->netdev);
 
-          rndis_transmit(priv);
+          if (priv->netdev.d_len > 0)
+            {
+              rndis_transmit(priv);
+            }
         }
-    }
-  else
+      else
 #endif
 #ifdef CONFIG_NET_ARP
-  if (hdr->type == HTONS(ETHTYPE_ARP))
-    {
-      NETDEV_RXARP(&priv->netdev);
-
-      arp_input(&priv->netdev);
-
-      if (priv->netdev.d_len > 0)
+      if (hdr->type == HTONS(ETHTYPE_ARP))
         {
-          rndis_transmit(priv);
+          NETDEV_RXARP(&priv->netdev);
+          arp_input(&priv->netdev);
+
+          if (priv->netdev.d_len > 0)
+            {
+              rndis_transmit(priv);
+            }
         }
-    }
-  else
+      else
 #endif
-    {
-      uerr("ERROR: Unsupported packet type dropped (%02x)\n",
-           HTONS(hdr->type));
-      NETDEV_RXDROPPED(&priv->netdev);
-      priv->netdev.d_len = 0;
+        {
+          uerr("ERROR: Unsupported packet type dropped (%02x)\n",
+               HTONS(hdr->type));
+          NETDEV_RXDROPPED(&priv->netdev);
+          priv->netdev.d_len = 0;
+        }
+
+      netdev_iob_release(&priv->netdev);
     }
 
-  priv->current_rx_datagram_size = 0;
-  rndis_unblock_rx(priv);
-
-  if (priv->net_req != NULL)
+  flags = enter_critical_section();
+  if (priv->rx_blocked && rndis_allocrxreq(priv))
     {
-      rndis_freenetreq(priv);
+      rndis_unblock_rx(priv);
     }
+  leave_critical_section(flags);
 
   netdev_unlock(&priv->netdev);
 }
@@ -1502,6 +1573,11 @@ static inline int rndis_recvpacket(FAR struct rndis_dev_s *priv,
 
 errout:
   rndis_resetrxstate(priv);
+  rndis_freerxreq(priv);
+  if (!rndis_allocrxreq(priv))
+    {
+      rndis_block_rx(priv);
+    }
   return OK;
 }
 
@@ -1840,13 +1916,14 @@ static void rndis_rdcomplete(FAR struct usbdev_ep_s *ep,
                              FAR struct usbdev_req_s *req)
 {
   FAR struct rndis_dev_s *priv;
+  FAR struct rndis_rdreq_s *rdreq;
   irqstate_t flags;
   int ret;
 
   /* Sanity check */
 
 #ifdef CONFIG_DEBUG_FEATURES
-  if (!ep || !ep->priv || !req)
+  if (!ep || !ep->priv || !req || !req->priv)
     {
       usbtrace(TRACE_CLSERROR(USBSER_TRACEERR_INVALIDARG), 0);
       return;
@@ -1856,13 +1933,14 @@ static void rndis_rdcomplete(FAR struct usbdev_ep_s *ep,
   /* Extract references to private data */
 
   priv = (FAR struct rndis_dev_s *)ep->priv;
+  rdreq = (FAR struct rndis_rdreq_s *)req->priv;
 
   /* Process the received data unless this is some unusual condition */
 
   ret = OK;
 
   flags = enter_critical_section();
-  priv->rdreq_submitted = false;
+  rdreq->submitted = false;
 
   switch (req->result)
     {
@@ -2357,15 +2435,20 @@ static int usbclass_bind(FAR struct usbdevclass_driver_s *driver,
       reqlen = CONFIG_RNDIS_BULKOUT_REQLEN;
     }
 
-  priv->rdreq = usbdev_allocreq(priv->epbulkout, reqlen);
-  if (priv->rdreq == NULL)
+  for (i = 0; i < CONFIG_RNDIS_NRDREQS; i++)
     {
-      usbtrace(TRACE_CLSERROR(USBSER_TRACEERR_RDALLOCREQ), -ENOMEM);
-      ret = -ENOMEM;
-      goto errout;
-    }
+      priv->rdreqs[i].req = usbdev_allocreq(priv->epbulkout, reqlen);
+      if (priv->rdreqs[i].req == NULL)
+        {
+          usbtrace(TRACE_CLSERROR(USBSER_TRACEERR_RDALLOCREQ), -ENOMEM);
+          ret = -ENOMEM;
+          goto errout;
+        }
 
-  priv->rdreq->callback = rndis_rdcomplete;
+      priv->rdreqs[i].req->priv     = &priv->rdreqs[i];
+      priv->rdreqs[i].req->callback = rndis_rdcomplete;
+      priv->rdreqs[i].submitted     = false;
+    }
 
   /* Pre-allocate write request containers and put in a free list.
    * The buffer size should be larger than a full packet.  Otherwise,
@@ -2472,6 +2555,7 @@ static void usbclass_unbind(FAR struct usbdevclass_driver_s *driver,
 {
   FAR struct rndis_dev_s *priv;
   FAR struct rndis_req_s *reqcontainer;
+  int i;
   irqstate_t flags;
 
   usbtrace(TRACE_CLASSUNBIND, 0);
@@ -2524,31 +2608,48 @@ static void usbclass_unbind(FAR struct usbdevclass_driver_s *driver,
           priv->epintin_req = NULL;
         }
 
-      /* Free pre-allocated read requests (which should all have
-       * been returned to the free list at this time -- we don't check)
-       */
-
-      if (priv->rdreq)
+      for (i = 0; i < CONFIG_RNDIS_NRDREQS; i++)
         {
-          usbdev_freereq(priv->epbulkout, priv->rdreq);
-        }
-
-      /* Free write requests that are not in use (which should be all
-       * of them
-       */
-
-      flags = enter_critical_section();
-      while (!sq_empty(&priv->reqlist))
-        {
-          reqcontainer = (struct rndis_req_s *)sq_remfirst(&priv->reqlist);
-          if (reqcontainer->req != NULL)
+          if (priv->rdreqs[i].req != NULL)
             {
-              reqcontainer->req->buf = reqcontainer->buf;
-              usbdev_freereq(priv->epbulkin, reqcontainer->req);
+              usbdev_freereq(priv->epbulkout, priv->rdreqs[i].req);
+              priv->rdreqs[i].req = NULL;
             }
         }
 
+      flags = enter_critical_section();
+      sq_init(&priv->reqlist);
+      IOB_QINIT(&priv->rxdone);
       leave_critical_section(flags);
+
+      if (priv->net_req != NULL && priv->net_req->iob != NULL)
+        {
+          iob_free_chain(priv->net_req->iob);
+          priv->net_req->iob = NULL;
+        }
+
+      if (priv->rx_req != NULL)
+        {
+          iob_free_chain(priv->rx_req);
+          priv->rx_req = NULL;
+        }
+
+      for (i = 0; i < CONFIG_RNDIS_NWRREQS; i++)
+        {
+          reqcontainer = &priv->wrreqs[i];
+          if (reqcontainer->req != NULL)
+            {
+              if (reqcontainer->iob != NULL)
+                {
+                  iob_free_chain(reqcontainer->iob);
+                  reqcontainer->iob = NULL;
+                }
+
+              reqcontainer->req->buf = reqcontainer->buf;
+              usbdev_freereq(priv->epbulkin, reqcontainer->req);
+              reqcontainer->req = NULL;
+            }
+        }
 
       /* Free the interrupt IN endpoint */
 
@@ -3010,7 +3111,6 @@ static int usbclass_setconfig(FAR struct rndis_dev_s *priv, uint8_t config)
 
   /* Queue read requests in the bulk OUT endpoint */
 
-  priv->rdreq->callback = rndis_rdcomplete;
   ret = rndis_submit_rdreq(priv);
   if (ret != OK)
     {
@@ -3081,6 +3181,7 @@ static int usbclass_classobject(int minor,
   /* Initialize the USB ethernet driver structure */
 
   sq_init(&priv->reqlist);
+  IOB_QINIT(&priv->rxdone);
   memcpy(priv->host_mac_address, g_rndis_default_mac_addr, 6);
   priv->netdev.d_private = priv;
   priv->netdev.d_ifup = &rndis_ifup;
