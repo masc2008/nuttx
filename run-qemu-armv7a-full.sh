@@ -38,6 +38,14 @@ MACHINE="${QEMU_MACHINE:-virt,virtualization=off,gic-version=2}"
 CPU="${QEMU_CPU:-cortex-a7}"
 MEMORY="${QEMU_MEMORY:-256M}"
 SMP_CPUS="${QEMU_SMP:-1}"
+NET_MODE="${QEMU_NET_MODE:-user}"
+USER_NET="${QEMU_USER_NET:-10.0.2.0/24}"
+USER_HOST="${QEMU_USER_HOST:-10.0.2.2}"
+USER_DNS="${QEMU_USER_DNS:-10.0.2.3}"
+USER_DHCPSTART="${QEMU_USER_DHCPSTART:-10.0.2.15}"
+USER_HOSTFWD_TELNET="${QEMU_USER_HOSTFWD_TELNET:-tcp:127.0.0.1:10023-10.0.2.15:23}"
+USER_HOSTFWD_IPERF="${QEMU_USER_HOSTFWD_IPERF:-tcp:127.0.0.1:15001-10.0.2.15:5001}"
+TAP_IFNAME="${QEMU_TAP_IF:-tap0}"
 
 usage() {
   cat <<EOF
@@ -50,10 +58,27 @@ Environment overrides:
   QEMU_CPU      CPU model             (default: cortex-a7)
   QEMU_MEMORY   Guest RAM size        (default: 256M)
   QEMU_SMP      Number of CPUs        (default: 1)
+  QEMU_NET_MODE Guest network mode    (default: user, supported: user|tap)
+  QEMU_TAP_IF   TAP device for tap mode (default: tap0)
+  QEMU_USER_NET User-mode subnet        (default: 10.0.2.0/24)
+  QEMU_USER_HOST User-mode gateway IP   (default: 10.0.2.2)
+  QEMU_USER_DNS User-mode DNS IP        (default: 10.0.2.3)
+  QEMU_USER_DHCPSTART First DHCP lease  (default: 10.0.2.15)
 
 Options:
   --gdb         Start paused with a GDB stub on tcp::1234.
   --image PATH  Use a different ELF image instead of ${IMAGE}.
+
+Tap mode example for DHCP option 42 testing:
+  sudo ip tuntap add dev tap0 mode tap
+  sudo ip addr add 192.168.50.1/24 dev tap0
+  sudo ip link set tap0 up
+  dnsmasq --no-daemon --interface=tap0 --bind-interfaces \\
+    --dhcp-range=192.168.50.20,192.168.50.50,255.255.255.0 \\
+    --dhcp-option=option:router,192.168.50.1 \\
+    --dhcp-option=option:dns-server,192.168.50.1 \\
+    --dhcp-option=option:ntp-server,192.168.50.1
+  QEMU_NET_MODE=tap ${0##*/} --image ${IMAGE}
 EOF
 }
 
@@ -91,6 +116,26 @@ if ! command -v "${QEMU_BIN}" >/dev/null 2>&1; then
   exit 1
 fi
 
+case "${NET_MODE}" in
+  user)
+    NETDEV_ARGS=(
+      -netdev
+      "user,id=u1,ipv4=on,net=${USER_NET},host=${USER_HOST},dns=${USER_DNS},dhcpstart=${USER_DHCPSTART},ipv6=on,ipv6-net=fd00::/64,ipv6-host=fd00::2,hostfwd=${USER_HOSTFWD_TELNET},hostfwd=${USER_HOSTFWD_IPERF}"
+    )
+    ;;
+  tap)
+    NETDEV_ARGS=(
+      -netdev
+      "tap,id=u1,ifname=${TAP_IFNAME},script=no,downscript=no"
+    )
+    ;;
+  *)
+    echo "Unsupported QEMU_NET_MODE: ${NET_MODE}" >&2
+    echo "Expected one of: user, tap" >&2
+    exit 1
+    ;;
+esac
+
 QEMU_ARGS=(
   -M "${MACHINE}"
   -cpu "${CPU}"
@@ -101,7 +146,7 @@ QEMU_ARGS=(
   -chardev stdio,id=con,mux=on
   -serial chardev:con
   -global virtio-mmio.force-legacy=false
-  -netdev user,id=u1,ipv4=on,net=10.0.2.0/24,host=10.0.2.2,ipv6=on,ipv6-net=fd00::/64,ipv6-host=fd00::2,hostfwd=tcp:127.0.0.1:10023-10.0.2.15:23,hostfwd=tcp:127.0.0.1:15001-10.0.2.15:5001
+  "${NETDEV_ARGS[@]}"
   -device virtio-net-device,netdev=u1,bus=virtio-mmio-bus.0
   -mon chardev=con,mode=readline
   -kernel "${IMAGE}"

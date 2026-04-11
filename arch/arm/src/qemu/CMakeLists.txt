@@ -22,6 +22,10 @@
 
 set(SRCS qemu_boot.c qemu_serial.c qemu_irq.c qemu_timer.c)
 
+if(CONFIG_RTC)
+  list(APPEND SRCS qemu_rtc.c)
+endif()
+
 if(CONFIG_ARCH_ARMV7A)
   list(APPEND SRCS qemu_pgalloc.c qemu_memorymap.c)
 endif()
@@ -43,3 +47,8 @@ if(CONFIG_BUILD_PROTECTED)
 endif()
 
 target_sources(arch PRIVATE ${SRCS})
+
+if(CONFIG_LIBC_FDT)
+  target_include_directories(arch PRIVATE
+                             ${NUTTX_DIR}/libs/libc/fdt/dtc/libfdt)
+endif()
