@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CODEX_BIN="${CODEX_BIN:-codex}"
+HOST="${FLCLASH_HOST:-127.0.0.1}"
+HTTP_PORT="${FLCLASH_HTTP_PORT:-7890}"
+SOCKS_PORT="${FLCLASH_SOCKS_PORT:-7891}"
+
+port_open() {
+  local host="$1"
+  local port="$2"
+
+  if command -v nc >/dev/null 2>&1; then
+    nc -z "$host" "$port" >/dev/null 2>&1
+    return $?
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+sock = socket.socket()
+sock.settimeout(1.0)
+try:
+    sock.connect((host, port))
+except OSError:
+    sys.exit(1)
+else:
+    sys.exit(0)
+finally:
+    sock.close()
+PY
+    return $?
+  fi
+
+  return 1
+}
+
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+
+if port_open "$HOST" "$HTTP_PORT"; then
+  export HTTP_PROXY="http://${HOST}:${HTTP_PORT}"
+  export HTTPS_PROXY="$HTTP_PROXY"
+  echo "Using FLClash HTTP/Mixed proxy at ${HOST}:${HTTP_PORT}" >&2
+elif port_open "$HOST" "$SOCKS_PORT"; then
+  export ALL_PROXY="socks5://${HOST}:${SOCKS_PORT}"
+  echo "Using FLClash SOCKS5 proxy at ${HOST}:${SOCKS_PORT}" >&2
+else
+  echo "No FLClash proxy detected on ${HOST}:${HTTP_PORT} or ${HOST}:${SOCKS_PORT}" >&2
+  exit 1
+fi
+
+exec "$CODEX_BIN" "$@"
