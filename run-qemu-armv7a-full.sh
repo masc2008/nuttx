@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="/home/hma/nuttx"
+ROOT_DIR="/home/hma/apache"
 BUILD_DIR="${ROOT_DIR}/build-qemu-armv7a-full"
 IMAGE="${BUILD_DIR}/nuttx"
 OPENVELA_ROOT="${OPENVELA_ROOT:-/home/hma/open-vela/vela-opensource}"

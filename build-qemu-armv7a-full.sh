@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="/home/hma/nuttx"
+ROOT_DIR="/home/hma/apache"
 NUTTX_DIR="${ROOT_DIR}/nuttx"
 APPS_DIR="${ROOT_DIR}/nuttx-apps"
 BUILD_DIR="${ROOT_DIR}/build-qemu-armv7a-full"
