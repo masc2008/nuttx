@@ -66,6 +66,7 @@
 #include <sys/uio.h>
 
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -118,6 +119,17 @@ static void *g_priv[CONFIG_SIM_NETDEV_NUMBER];
 static void (*g_tx_done_intr_cb[CONFIG_SIM_NETDEV_NUMBER])(void *priv);
 static void (*g_rx_ready_intr_cb[CONFIG_SIM_NETDEV_NUMBER])(void *priv);
 
+static uint64_t sim_mac_rand(uint64_t *state)
+{
+  uint64_t x = *state;
+
+  x ^= x >> 12;
+  x ^= x << 25;
+  x ^= x >> 27;
+  *state = x;
+  return x * UINT64_C(2685821657736338717);
+}
+
 #ifdef CONFIG_SIM_NET_HOST_ROUTE
 #  ifdef CONFIG_NET_IPv4
 static struct rtentry ghostroute[CONFIG_SIM_NETDEV_NUMBER];
@@ -153,6 +165,9 @@ static inline void dump_ethhdr(const char *msg, unsigned char *buf,
 static void set_macaddr(int devidx)
 {
   unsigned char mac[7];
+  struct timespec ts;
+  uint64_t seed;
+  int i;
 
   /* Assign a random locally-created MAC address.
    *
@@ -163,21 +178,26 @@ static void set_macaddr(int devidx)
    *
    * With a unique MAC address, we get ALL the packets.
    *
-   * The generated MAC addresses will be same if we use timestamp as seed and
-   * create more than one device at the same time, so add index to make mac
-   * address different.
+   * Separate simulator processes can start within the same second, so avoid
+   * time(NULL)-only seeding. Mix PID, nanosecond time, and device index to
+   * reduce collisions across concurrently-started SIM instances.
    *
    * TODO:  The generated MAC address should be checked to see if it
    *        conflicts with something else on the network.
    */
 
-  srand(time(NULL) + devidx);
+  clock_gettime(CLOCK_REALTIME, &ts);
+  seed  = ((uint64_t)ts.tv_sec << 32) ^ (uint64_t)ts.tv_nsec;
+  seed ^= ((uint64_t)getpid() << 16);
+  seed ^= (uint64_t)devidx;
+
   mac[0] = 0x42;
-  mac[1] = rand() % 256;
-  mac[2] = rand() % 256;
-  mac[3] = rand() % 256;
-  mac[4] = rand() % 256;
-  mac[5] = rand() % 256;
+
+  for (i = 1; i < 6; i++)
+    {
+      mac[i] = sim_mac_rand(&seed) & 0xff;
+    }
+
   mac[6] = 0;
 
   sim_netdriver_setmacaddr(devidx, mac);
