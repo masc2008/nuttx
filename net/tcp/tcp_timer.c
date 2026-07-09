@@ -105,6 +105,23 @@ static int tcp_get_timeout(FAR struct tcp_conn_s *conn)
 {
   int timeout = conn->timer;
 
+#ifdef CONFIG_NET_TCP_DELAYED_ACK
+  if (conn->rx_unackseg > 0)
+    {
+      int acktimeout = ACK_DELAY - conn->rx_acktimer;
+
+      if (acktimeout < 1)
+        {
+          acktimeout = 1;
+        }
+
+      if (timeout == 0 || acktimeout < timeout)
+        {
+          timeout = acktimeout;
+        }
+    }
+#endif
+
 #ifdef CONFIG_NET_TCP_KEEPALIVE
   if (timeout == 0)
     {

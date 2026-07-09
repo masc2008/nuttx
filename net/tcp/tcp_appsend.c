@@ -144,6 +144,10 @@ void tcp_appsend(FAR struct net_driver_s *dev, FAR struct tcp_conn_s *conn,
            */
 
           conn->rx_unackseg = 1;
+
+          /* No packet is sent on this path, so arm the delayed ACK timer. */
+
+          tcp_update_timer(conn);
           return;
         }
     }
