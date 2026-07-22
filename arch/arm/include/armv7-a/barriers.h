@@ -47,6 +47,4 @@
 
 #define UP_ISB()  arm_isb()
 #define UP_NOP()  arm_nop()
-#define UP_SEV()  arm_sev()
-
 #endif /* __ARCH_ARM_INCLUDE_ARMV7_A_BARRIERS_H */

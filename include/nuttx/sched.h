@@ -1660,17 +1660,19 @@ static inline_function pid_t nxsched_gettid(void)
    */
 
   /* Check if the task is actually running */
-
-  if (rtcb->task_state == TSTATE_TASK_RUNNING)
+  if (rtcb != NULL)
     {
-      /* Yes.. Return the task ID from the TCB at the head of the
-       * ready-to-run task list
-       */
+      if (rtcb->task_state == TSTATE_TASK_RUNNING)
+        {
+        /* Yes.. Return the task ID from the TCB at the head of the
+        * ready-to-run task list
+        */
 
-      tid = rtcb->pid;
+        tid = rtcb->pid;
+        return tid;
+        }
     }
-
-  return tid;
+  return 0;
 }
 
 /****************************************************************************
