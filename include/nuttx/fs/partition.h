@@ -103,6 +103,28 @@ int parse_mtd_partition(FAR struct mtd_dev_s *mtd,
                         partition_handler_t handler,
                         FAR void *arg);
 
+/****************************************************************************
+ * Name: parse_mtd_txtable_partition
+ *
+ * Description:
+ *   parse the txtable partition table on a mtd device.
+ *
+ * Input Parameters:
+ *   mtd     - The MTD device to be parsed
+ *   handler - The function to be called for each found partition
+ *   arg     - A caller provided value to return with the handler
+ *
+ * Returned Value:
+ *   Zero on success; A negated errno value is returned on a failure
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_TXTABLE_PARTITION
+int parse_mtd_txtable_partition(FAR struct mtd_dev_s *mtd,
+                                partition_handler_t handler,
+                                FAR void *arg);
+#endif
+
 #undef EXTERN
 #if defined(__cplusplus)
 }

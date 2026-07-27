@@ -249,6 +249,59 @@ int parse_block_partition(FAR const char *path,
 }
 
 /****************************************************************************
+ * Name: parse_mtd_txtable_partition
+ *
+ * Description:
+ *   parse the txtable partition table on a mtd device.
+ *
+ * Input Parameters:
+ *   mtd     - The MTD device to be parsed
+ *   handler - The function to be called for each found partition
+ *   arg     - A caller provided value to return with the handler
+ *
+ * Returned Value:
+ *   Zero on success; A negated errno value is returned on a failure
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_TXTABLE_PARTITION
+int parse_mtd_txtable_partition(FAR struct mtd_dev_s *mtd,
+                                partition_handler_t handler,
+                                FAR void *arg)
+{
+    struct partition_state_s state;
+    struct mtd_geometry_s mgeo;
+    struct partition_register_s reg;
+    int ret;
+
+    ret = mtd->ioctl(mtd, MTDIOC_GEOMETRY, (unsigned long)(uintptr_t)&mgeo);
+    if (ret < 0) {
+        return ret;
+    }
+
+    DEBUGASSERT(mgeo.blocksize);
+
+    state.blk       = NULL;
+    state.mtd       = mtd;
+    state.blocksize = mgeo.blocksize;
+    state.erasesize = mgeo.erasesize;
+    state.nblocks   = mgeo.neraseblocks;
+    state.nblocks  *= mgeo.erasesize / mgeo.blocksize;
+
+    if (handler == NULL) {
+        reg.state = &state;
+        reg.dir = arg ? (FAR const char *)arg : "/dev";
+        handler = register_partition;
+        arg = &reg;
+    }
+
+    ret = parse_txtable_partition(&state, handler, arg);
+
+    return ret;
+}
+#endif
+
+/****************************************************************************
  * Name: parse_mtd_partition
  *
  * Description:
