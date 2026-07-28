@@ -1331,6 +1331,8 @@ static int netdev_upper_ifup(FAR struct net_driver_s *dev)
             snprintf(name, sizeof(name), NETDEV_THREAD_NAME_FMT,
                      dev->d_ifname);
 
+            nxsem_reset(&upper->sem[i], 0);
+
             t->tid = kthread_create(name, upper->lower->priority,
                                     CONFIG_DEFAULT_TASK_STACKSIZE,
                                     netdev_upper_loop, argv);
