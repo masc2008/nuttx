@@ -452,7 +452,7 @@ FAR void *net_ipv6_payload(FAR struct ipv6_hdr_s *ipv6, FAR uint8_t *proto);
  ****************************************************************************/
 
 #ifdef CONFIG_MM_IOB
-uint16_t net_iob_concat(FAR struct iob_s **iob1, FAR struct iob_s **iob2);
+uint32_t net_iob_concat(FAR struct iob_s **iob1, FAR struct iob_s **iob2);
 #endif
 
 /****************************************************************************

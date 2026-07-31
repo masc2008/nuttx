@@ -64,7 +64,7 @@ static inline uint32_t
 tcp_data_event(FAR struct net_driver_s *dev, FAR struct tcp_conn_s *conn,
                uint32_t flags)
 {
-  uint16_t recvlen;
+  uint32_t recvlen;
 
   /* Assume that we will ACK the data.  The data will be ACKed if it is
    * placed in the read-ahead buffer -OR- if it zero length
@@ -379,12 +379,12 @@ uint32_t tcp_callback(FAR struct net_driver_s *dev,
  *
  ****************************************************************************/
 
-uint16_t tcp_datahandler(FAR struct net_driver_s *dev,
+uint32_t tcp_datahandler(FAR struct net_driver_s *dev,
                          FAR struct tcp_conn_s *conn,
                          uint16_t offset)
 {
   FAR struct iob_s *iob = dev->d_iob;
-  uint16_t buflen;
+  uint32_t buflen;
 
   if (offset > 0)
     {
@@ -418,7 +418,7 @@ uint16_t tcp_datahandler(FAR struct net_driver_s *dev,
   tcp_readahead_signal(conn);
 #endif
 
-  ninfo("Buffered %" PRIu16 " bytes\n", buflen);
+  ninfo("Buffered %u bytes\n", buflen);
   return buflen;
 }
 

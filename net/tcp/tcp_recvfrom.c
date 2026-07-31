@@ -186,7 +186,7 @@ static inline uint32_t tcp_newdata(FAR struct net_driver_s *dev,
 
   if (recvlen < dev->d_len)
     {
-      uint16_t nsaved;
+      uint32_t nsaved;
       uint16_t buflen = dev->d_len - recvlen;
 
       nsaved = tcp_datahandler(dev, conn, 0);

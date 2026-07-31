@@ -85,15 +85,28 @@ static inline void net_carry32(FAR uint8_t *sum, uint16_t op16)
  *          network byte order (big endian).  This value may not be word
  *          aligned. The value pointed to by op32 is modified in place
  *
- *   op16 - A 16-bit integer in host byte order.
+ *   incr - A 32-bit integer in host byte order to add to op32.
  *
  ****************************************************************************/
 
-void net_incr32(FAR uint8_t *op32, uint16_t op16)
+void net_incr32(FAR uint8_t *op32, uint32_t incr)
 {
-  op32[3] += (op16 & 0xff);
-  op32[2] += (op16 >> 8);
-  net_carry32(op32, op16);
+  uint16_t lo = incr & 0xffff;
+  uint16_t hi = incr >> 16;
+
+  /* Add the lower 16 bits */
+  op32[3] += (lo & 0xff);
+  op32[2] += (lo >> 8);
+  net_carry32(op32, lo);
+
+  /* Add the upper 16 bits */
+  op32[1] += (hi & 0xff);
+  if (op32[1] < (hi & 0xff))
+    {
+      ++op32[0];
+    }
+
+  op32[0] += (hi >> 8);
 }
 
 #endif /* CONFIG_NET_ARCH_INCR32 */

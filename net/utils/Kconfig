@@ -10,7 +10,7 @@ config NET_ARCH_INCR32
 		Define if you architecture provided an optimized version of
 		net_incr32() with prototype:
 
-			void net_incr32(FAR uint8_t *op32, uint16_t op16)
+			void net_incr32(FAR uint8_t *op32, uint32_t incr)
 
 config NET_ARCH_CHKSUM
 	bool "Architecture-specific net_chksum()"

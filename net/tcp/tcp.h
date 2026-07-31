@@ -1443,7 +1443,7 @@ uint32_t tcp_callback(FAR struct net_driver_s *dev,
  *
  ****************************************************************************/
 
-uint16_t tcp_datahandler(FAR struct net_driver_s *dev,
+uint32_t tcp_datahandler(FAR struct net_driver_s *dev,
                          FAR struct tcp_conn_s *conn,
                          uint16_t offset);
 

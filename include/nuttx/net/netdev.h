@@ -997,11 +997,11 @@ uint16_t ipv4_chksum(FAR struct ipv4_hdr_s *ipv4);
  *          network byte order (big endian).  This value may not be word
  *          aligned. The value pointed to by op32 is modified in place
  *
- *   op16 - A 16-bit integer in host byte order.
+ *   incr - A 32-bit integer in host byte order to add to op32.
  *
  ****************************************************************************/
 
-void net_incr32(FAR uint8_t *op32, uint16_t op16);
+void net_incr32(FAR uint8_t *op32, uint32_t incr);
 
 /****************************************************************************
  * Name: netdev_ipv4_hdrlen
