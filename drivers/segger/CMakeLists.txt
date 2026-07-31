@@ -95,7 +95,9 @@ if(CONFIG_SEGGER_SYSVIEW)
                                             -Wno-pointer-to-int-cast)
   target_sources(SystemView PRIVATE note_sysview.c
                                     SystemView/SEGGER/SEGGER_SYSVIEW.c)
-
+if(CONFIG_SEGGER_SYSVIEW_POST_MORTEM_MODE)
+  target_sources(SystemView PRIVATE SystemView/SEGGER/rtt_wrap_tracker.c)
+endif()
   target_include_directories(SystemView PRIVATE ${NUTTX_DIR}/sched config
                                                 RTT/RTT SystemView/SEGGER)
 

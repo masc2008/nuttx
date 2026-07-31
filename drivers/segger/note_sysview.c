@@ -39,6 +39,10 @@
 
 #include "sched/sched.h"
 
+#if defined(CONFIG_SEGGER_SYSVIEW_POST_MORTEM_MODE)
+#include "rtt_wrap_tracker.h"
+#endif
+
 /****************************************************************************
  * Private Types
  ****************************************************************************/
@@ -490,7 +494,13 @@ int note_sysview_initialize(void)
   SEGGER_SYSVIEW_SetRAMBase(CONFIG_SEGGER_SYSVIEW_RAM_BASE);
 #endif
 
+#if defined(CONFIG_EXAMPLES_SYSVIEW_OFFLINE)
+#if defined(CONFIG_SEGGER_SYSVIEW_POST_MORTEM_MODE)
+  rtt_wrap_reset_all();
+#endif
+#else
   SEGGER_SYSVIEW_Start();
+#endif
   ret = note_driver_register(&g_note_sysview_driver.driver);
   syslog(LOG_NOTICE, "SEGGER RTT Control Block Address: %#" PRIxPTR "\n",
                       (uintptr_t)&_SEGGER_RTT +

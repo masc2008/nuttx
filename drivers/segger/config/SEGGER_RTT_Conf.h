@@ -91,6 +91,10 @@ extern ptrdiff_t g_segger_offset;
 #  define SEGGER_RTT_MODE_DEFAULT       SEGGER_RTT_MODE_NO_BLOCK_SKIP
 #endif
 
+#if defined(CONFIG_SEGGER_SYSVIEW_POST_MORTEM_MODE)
+#  define SEGGER_SYSVIEW_POST_MORTEM_MODE       1
+#endif
+
 /* 0: Use memcpy/SEGGER_RTT_MEMCPY, 1: Use a simple byte-loop */
 
 #define SEGGER_RTT_MEMCPY_USE_BYTELOOP  0

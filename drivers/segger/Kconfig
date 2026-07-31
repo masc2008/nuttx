@@ -273,11 +273,22 @@ config SEGGER_SYSVIEW_RTT_CHANNEL
 	---help---
 		The RTT channel number for SystemView, zero find the unused one.
 
-config SEGGER_SYSVIEW_RTT_BUFFER_SIZE
+config SEGGER_SYSVIEW_RTT_BUFFER_SIZE_USER
 	int "Segger System View buffer size"
+	depends on SEGGER_SYSVIEW && !EXAMPLES_SYSVIEW_OFFLINE
 	default SEGGER_RTT_BUFFER_SIZE_UP
 	---help---
+		User-configurable SystemView RTT buffer size.
+		Hidden and ignored when EXAMPLES_SYSVIEW_OFFLINE=y.
+
+config SEGGER_SYSVIEW_RTT_BUFFER_SIZE
+	int
+	depends on SEGGER_SYSVIEW
+	default SEGGER_SYSVIEW_OFFLINE_RTT_BUFFER_SIZE if EXAMPLES_SYSVIEW_OFFLINE
+	default SEGGER_SYSVIEW_RTT_BUFFER_SIZE_USER
+	---help---
 		Number of bytes that SystemView uses for the RTT buffer.
+		Auto-derived from OFFLINE mode or user setting.
 
 config SEGGER_SYSVIEW_RAM_BASE
 	int "Segger System View Ram Base"
