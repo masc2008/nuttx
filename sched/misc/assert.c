@@ -38,6 +38,9 @@
 #include <nuttx/tls.h>
 #include <nuttx/signal.h>
 #include <nuttx/sched.h>
+#ifdef CONFIG_BINFMT_LOADABLE
+#  include <nuttx/binfmt/binfmt.h>
+#endif
 #ifdef CONFIG_ARCH_LEDS
 #  include <arch/board/board.h>
 #endif
@@ -739,6 +742,21 @@ static void dump_assert_info(FAR struct tcb_s *rtcb,
          rtcb->entry.main);
 
   nxsched_put_tcb(ptcb);
+#ifdef CONFIG_BINFMT_LOADABLE
+  /* If the crashing task is a loadable ELF module, dump its load info so
+   * textalloc / dataalloc are available for post-mortem addr2line lookup
+   * without needing CONFIG_DEBUG_BINFMT_INFO at load time.
+   */
+
+  if (rtcb->group != NULL && rtcb->group->tg_bininfo != NULL)
+    {
+      FAR struct binary_s *bin = rtcb->group->tg_bininfo;
+      _alert("Module load info (bininfo=%p):\n", bin);
+      _alert("  entrypt:   %p\n", bin->entrypt);
+      _alert("  textalloc: %p\n", bin->mod.textalloc);
+      _alert("  dataalloc: %p\n", bin->mod.dataalloc);
+    }
+#endif
 
   /* Dump current CPU registers, running task stack and backtrace. */
 
