@@ -33,6 +33,7 @@
 #include <nuttx/kthread.h>
 #include <nuttx/semaphore.h>
 #include <nuttx/wqueue.h>
+#include <nuttx/semaphore.h>
 
 #include <nuttx/net/dns.h>
 #include <nuttx/net/ip.h>
@@ -204,7 +205,7 @@ static const struct netdev_ops_s g_net_rpmsg_drv_ops =
 
 static void net_rpmsg_drv_wait(FAR sem_t *sem)
 {
-  net_sem_wait_uninterruptible(sem);
+  nxsem_wait_uninterruptible(sem);
 }
 
 /****************************************************************************

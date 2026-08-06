@@ -41,6 +41,8 @@
 #include <sys/param.h>
 
 #include <nuttx/queue.h>
+#include <nuttx/irq.h>
+#include <nuttx/spinlock.h>
 #include <nuttx/net/net.h>
 #include <nuttx/net/netdev.h>
 #include <nuttx/kmalloc.h>
