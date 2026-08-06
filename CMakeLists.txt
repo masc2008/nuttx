@@ -699,14 +699,6 @@ endif()
 
 # Perform link
 
-# Add empty source file to nuttx target since cmake requires at least one file
-# and we will only be linking libraries
-
-if(CONFIG_HAVE_CXX)
-  file(TOUCH "${CMAKE_CURRENT_BINARY_DIR}/empty.cxx")
-  target_sources(nuttx PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/empty.cxx")
-endif()
-
 # Always generata a empty.c avoid we also need a empty.c for BUILD_PROTECT
 # nuttx_user also need at least one file be linking libraries
 
