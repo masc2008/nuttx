@@ -19,8 +19,8 @@
 # ##############################################################################
 
 add_subdirectory(${ARCH_SUBDIR})
-add_subdirectory(${NUTTX_CHIP_ABS_DIR} EXCLUDE_FROM_ALL exclude_chip)
 add_subdirectory(common)
+add_subdirectory(${NUTTX_CHIP_ABS_DIR} EXCLUDE_FROM_ALL exclude_chip)
 if(NOT ${ARCH_SUBDIR_ARM})
   add_subdirectory(${ARCH_SUBDIR_ARM})
 endif()
