@@ -46,12 +46,16 @@
 #include <nuttx/spinlock.h>
 #include <nuttx/net/net.h>
 #include <nuttx/net/netdev.h>
+#include <nuttx/net/icmp.h>
+#include <nuttx/net/icmp.h>
 #include <nuttx/kmalloc.h>
 #include <nuttx/arch.h>
 #include <nuttx/usb/usb.h>
 #include <nuttx/usb/cdc.h>
 #include <nuttx/usb/usbdev.h>
 #include <nuttx/usb/usbdev_trace.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <nuttx/usb/rndis.h>
 #include <nuttx/wqueue.h>
 
@@ -179,6 +183,7 @@ struct rndis_dev_s
   uint32_t rndis_packet_filter;          /* RNDIS packet filter value */
   uint32_t rndis_host_tx_count;          /* TX packet counter */
   uint32_t rndis_host_rx_count;          /* RX packet counter */
+  uint32_t txsubmit_count;               /* Submitted USB TX requests */
   uint8_t host_mac_address[6];           /* Host side MAC address */
 
   size_t response_queue_words;           /* Count of words waiting in response_queue. */
@@ -898,11 +903,20 @@ static bool rndis_allocnetreq(FAR struct rndis_dev_s *priv)
 static void rndis_sendnetreq(FAR struct rndis_dev_s *priv)
 {
   irqstate_t flags = enter_critical_section();
+  int ret;
 
   DEBUGASSERT(priv->net_req != NULL);
 
   priv->net_req->req->priv = priv->net_req;
-  EP_SUBMIT(priv->epbulkin, priv->net_req->req);
+  ret = EP_SUBMIT(priv->epbulkin, priv->net_req->req);
+  if (ret == OK)
+    {
+      priv->txsubmit_count++;
+    }
+  else
+    {
+      nerr("ERROR: EP_SUBMIT failed: %d\n", ret);
+    }
 
   priv->net_req            = NULL;
   leave_critical_section(flags);
@@ -1173,6 +1187,28 @@ static void rndis_rxdispatch(FAR void *arg)
 #ifdef CONFIG_NET_IPv4
   if (hdr->type == HTONS(ETHTYPE_IP))
     {
+      FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
+
+      {
+        FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
+
+        if (icmp->type == ICMP_ECHO_REQUEST ||
+            icmp->type == ICMP_ECHO_REPLY)
+          {
+            struct in_addr srcaddr;
+            struct in_addr dstaddr;
+            char srcbuf[INET_ADDRSTRLEN];
+            char dstbuf[INET_ADDRSTRLEN];
+
+            srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
+            dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
+            nerr("RNDIS_RX_ICMP: len=%u src=%s dst=%s\n",
+                  (unsigned)priv->netdev.d_len,
+                  inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
+                  inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+          }
+      }
+
       NETDEV_RXIPV4(&priv->netdev);
 
       /* Receive an IPv4 packet from the network device */
@@ -1380,17 +1416,23 @@ static void rndis_txavail_work(FAR void *arg)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)arg;
   irqstate_t flags;
-  bool pending;
+  bool submitted;
+  bool retry;
+  uint32_t submits_before;
+  unsigned int pass = 0;
 
   rndis_do_iob_free(priv);
 
   do
     {
+      retry = false;
+
       flags = enter_critical_section();
       priv->txpoll_pending = false;
       leave_critical_section(flags);
 
       netdev_lock(&priv->netdev);
+      submits_before = priv->txsubmit_count;
 
       if (rndis_allocnetreq(priv))
         {
@@ -1401,14 +1443,21 @@ static void rndis_txavail_work(FAR void *arg)
             }
         }
 
+      submitted = priv->txsubmit_count != submits_before;
+
       flags = enter_critical_section();
-      pending = priv->txpoll_pending ||
-                (priv->netdev.d_polltype != 0 && rndis_hasfreereqs(priv));
+      if (priv->txpoll_pending ||
+          (!submitted &&
+           priv->netdev.d_polltype != 0 && rndis_hasfreereqs(priv)))
+        {
+          retry = true;
+        }
+
       leave_critical_section(flags);
 
       netdev_unlock(&priv->netdev);
     }
-  while (pending);
+  while (retry && ++pass < 2);
 }
 
 /****************************************************************************
