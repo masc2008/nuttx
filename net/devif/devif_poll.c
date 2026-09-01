@@ -512,9 +512,20 @@ static inline_function int devif_poll_icmpv6(FAR struct net_driver_s *dev,
 static inline_function int devif_poll_forward(FAR struct net_driver_s *dev,
                                               devif_poll_callback_t callback)
 {
+  int bstop;
+  uint8_t fwdpending;
+
   /* Perform the forwarding poll */
 
   netfwd_poll(dev);
+
+  /* Remember whether a forward callback could not complete during this
+   * poll cycle.  In that case we need to keep IPFWD_POLL armed so the
+   * device gets another chance without waiting for unrelated traffic.
+   */
+
+  fwdpending = dev->d_fwdpending;
+  dev->d_fwdpending = NETDEV_FWD_NONE;
 
   /* NOTE: that 6LoWPAN packet conversions are handled differently for
    * forwarded packets.  That is because we don't know what the packet
@@ -523,7 +534,13 @@ static inline_function int devif_poll_forward(FAR struct net_driver_s *dev,
 
   /* Call back into the driver */
 
-  return devif_poll_out(dev, callback);
+  bstop = devif_poll_out(dev, callback);
+  if (fwdpending != NETDEV_FWD_NONE)
+    {
+      bstop = 1;
+    }
+
+  return bstop;
 }
 #endif /* CONFIG_NET_ICMPv6_SOCKET || CONFIG_NET_ICMPv6_NEIGHBOR*/
 

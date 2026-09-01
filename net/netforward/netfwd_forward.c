@@ -224,6 +224,7 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
            * Wait for the next polling cycle and check again.
            */
 
+          dev->d_fwdpending |= NETDEV_FWD_RETRY;
           return flags;
         }
 

@@ -157,6 +157,7 @@ struct rndis_dev_s
   FAR struct usbdev_req_s *epintin_req;  /* Pointer to preallocated interrupt in endpoint request */
   FAR struct usbdev_req_s *rdreq;        /* Pointer to Preallocated control endpoint read request */
   struct sq_queue_s reqlist;             /* List of free write request containers */
+  mutex_t lock;                          /* Protect request bookkeeping */
 
   /* Preallocated USB request buffers */
 
@@ -869,20 +870,23 @@ static void rndis_freewrreq(FAR struct rndis_dev_s *priv,
 
 static bool rndis_allocnetreq(FAR struct rndis_dev_s *priv)
 {
-  irqstate_t flags = enter_critical_section();
+  while (nxmutex_lock(&priv->lock) < 0);
+
   DEBUGASSERT(priv->net_req == NULL);
 
   if (!rndis_hasfreereqs(priv))
     {
-      leave_critical_section(flags);
+      nxmutex_unlock(&priv->lock);
       return false;
     }
 
   priv->net_req = rndis_allocwrreq(priv);
   if (priv->net_req)
-    priv->net_req->iob = NULL;
+    {
+      priv->net_req->iob = NULL;
+    }
 
-  leave_critical_section(flags);
+  nxmutex_unlock(&priv->lock);
   return priv->net_req != NULL;
 }
 
@@ -938,12 +942,12 @@ static void rndis_sendnetreq(FAR struct rndis_dev_s *priv)
 
 static void rndis_freenetreq(FAR struct rndis_dev_s *priv)
 {
-  irqstate_t flags = enter_critical_section();
+  while (nxmutex_lock(&priv->lock) < 0);
 
   rndis_freewrreq(priv, priv->net_req);
   priv->net_req = NULL;
 
-  leave_critical_section(flags);
+  nxmutex_unlock(&priv->lock);
 }
 
 /****************************************************************************
@@ -1174,7 +1178,7 @@ static void rndis_rxdispatch(FAR void *arg)
       return;
     }
 
-  net_lock();
+  netdev_lock(&priv->netdev);
 
   flags = enter_critical_section();
   rndis_giverxreq(priv);
@@ -1273,7 +1277,7 @@ static void rndis_rxdispatch(FAR void *arg)
       rndis_freenetreq(priv);
     }
 
-  net_unlock();
+  netdev_unlock(&priv->netdev);
 }
 
 /****************************************************************************
@@ -1415,49 +1419,21 @@ static int rndis_ifdown(FAR struct net_driver_s *dev)
 static void rndis_txavail_work(FAR void *arg)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)arg;
-  irqstate_t flags;
-  bool submitted;
-  bool retry;
-  uint32_t submits_before;
-  unsigned int pass = 0;
 
   rndis_do_iob_free(priv);
 
-  do
+  netdev_lock(&priv->netdev);
+
+  if (rndis_allocnetreq(priv))
     {
-      retry = false;
-
-      flags = enter_critical_section();
-      priv->txpoll_pending = false;
-      leave_critical_section(flags);
-
-      netdev_lock(&priv->netdev);
-      submits_before = priv->txsubmit_count;
-
-      if (rndis_allocnetreq(priv))
+      devif_poll(&priv->netdev, rndis_txpoll);
+      if (priv->net_req != NULL)
         {
-          devif_poll(&priv->netdev, rndis_txpoll);
-          if (priv->net_req != NULL)
-            {
-              rndis_freenetreq(priv);
-            }
+          rndis_freenetreq(priv);
         }
-
-      submitted = priv->txsubmit_count != submits_before;
-
-      flags = enter_critical_section();
-      if (priv->txpoll_pending ||
-          (!submitted &&
-           priv->netdev.d_polltype != 0 && rndis_hasfreereqs(priv)))
-        {
-          retry = true;
-        }
-
-      leave_critical_section(flags);
-
-      netdev_unlock(&priv->netdev);
     }
-  while (retry && ++pass < 2);
+
+  netdev_unlock(&priv->netdev);
 }
 
 /****************************************************************************
@@ -1474,18 +1450,11 @@ __attribute__((unused))
 static int rndis_txavail(FAR struct net_driver_s *dev)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)dev->d_private;
-  irqstate_t flags;
 
-  flags = enter_critical_section();
-  if (!work_available(&priv->pollwork))
+  if (work_available(&priv->pollwork))
     {
-      priv->txpoll_pending = true;
-      leave_critical_section(flags);
-      return OK;
+      work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
     }
-
-  leave_critical_section(flags);
-  work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
 
   return OK;
 }
@@ -3239,6 +3208,7 @@ static int usbclass_classobject(int minor,
   /* Initialize the USB ethernet driver structure */
 
   sq_init(&priv->reqlist);
+  nxmutex_init(&priv->lock);
   memcpy(priv->host_mac_address, g_rndis_default_mac_addr, 6);
   memcpy(priv->netdev.d_mac.ether.ether_addr_octet, g_rndis_dev_mac_addr, 6);
   priv->netdev.d_private = priv;
