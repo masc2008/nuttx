@@ -1419,6 +1419,8 @@ static int rndis_ifdown(FAR struct net_driver_s *dev)
 static void rndis_txavail_work(FAR void *arg)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)arg;
+  irqstate_t flags;
+  bool txpoll_pending;
 
   rndis_do_iob_free(priv);
 
@@ -1434,6 +1436,22 @@ static void rndis_txavail_work(FAR void *arg)
     }
 
   netdev_unlock(&priv->netdev);
+
+  flags = enter_critical_section();
+  txpoll_pending = priv->txpoll_pending;
+  priv->txpoll_pending = false;
+  leave_critical_section(flags);
+
+  if (txpoll_pending)
+    {
+      if (work_queue_next(ETHWORK, &priv->pollwork, rndis_txavail_work,
+                          priv, 0) < 0)
+        {
+          flags = enter_critical_section();
+          priv->txpoll_pending = true;
+          leave_critical_section(flags);
+        }
+    }
 }
 
 /****************************************************************************
@@ -1450,10 +1468,17 @@ __attribute__((unused))
 static int rndis_txavail(FAR struct net_driver_s *dev)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)dev->d_private;
+  irqstate_t flags;
 
   if (work_available(&priv->pollwork))
     {
       work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
+    }
+  else
+    {
+      flags = enter_critical_section();
+      priv->txpoll_pending = true;
+      leave_critical_section(flags);
     }
 
   return OK;

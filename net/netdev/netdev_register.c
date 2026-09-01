@@ -437,7 +437,6 @@ int netdev_register(FAR struct net_driver_s *dev, enum net_lltype_e lltype)
       dev->d_polltype = 0;
 
 #ifdef CONFIG_NET_IPFORWARD
-      dev->d_fwdpending = 0;
 #endif
 
       nxrmutex_init(&dev->d_lock);

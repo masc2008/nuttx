@@ -565,11 +565,7 @@ struct net_driver_s
 #endif
 
 #ifdef CONFIG_NET_IPFORWARD
-#  define NETDEV_FWD_NONE   0
-#  define NETDEV_FWD_RETRY  1
-#  define NETDEV_FWD_MORE   2
   struct work_s d_fwdwork; /* For concurrent forwarding work */
-  uint8_t d_fwdpending;    /* NETDEV_FWD_* state */
 #endif
 
   /* Drivers may attached device-specific, private information */
