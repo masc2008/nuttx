@@ -45,38 +45,9 @@
 #include "neighbor/neighbor.h"
 #include "netforward/netforward.h"
 
-#ifdef CONFIG_NET_IPFORWARD
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
-
-static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
-                                    FAR void *pvpriv, uint32_t flags);
-
-/****************************************************************************
- * Name: netfwd_has_pending
- *
- * Description:
- *   Check whether there are more pending forward callbacks behind the
- *   current callback.
- *
- ****************************************************************************/
-
-static int netfwd_has_pending(FAR struct devif_callback_s *cb)
-{
-  while (cb != NULL)
-    {
-      if (cb->event == netfwd_eventhandler &&
-          (cb->flags & IPFWD_POLL) != 0)
-        {
-          return 1;
-        }
-
-      cb = cb->nxtconn;
-    }
-
-  return 0;
-}
 
 /****************************************************************************
  * Public Functions
@@ -183,7 +154,7 @@ static inline void forward_ipselect(FAR struct forward_s *fwd)
 
       dev->d_appdata = IPBUF(IPv4UDP_HDRLEN);
     }
-  else
+  else if (fwd->f_domain == PF_INET6)
     {
       /* Set a bit in the d_flags to distinguish this from an IPv6 packet */
 
@@ -249,7 +220,6 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
 
       else if (dev->d_sndlen > 0 || (flags & IPFWD_NEWDATA) != 0)
         {
-          dev->d_fwdpending = NETDEV_FWD_RETRY;
           /* Another thread has beat us sending data or the buffer is busy,
            * Wait for the next polling cycle and check again.
            */
@@ -261,8 +231,6 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
 
       else
         {
-          dev->d_fwdpending = netfwd_has_pending(fwd->f_cb->nxtconn) ?
-                              NETDEV_FWD_MORE : NETDEV_FWD_NONE;
           /* Copy the user data into d_appdata and send it. */
 
           devif_forward(fwd);
@@ -303,37 +271,46 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
 }
 
 /****************************************************************************
- * Name: netfwd_forward_work
+ * Name: netfwd_forward_notify
  *
  * Description:
- *   Perform the forwarding operation on the worker thread.
+ *   Perform the forwarding operation.
  *
  * Input Parameters:
- *   arg - The target device that has pending forward callbacks.
+ *   fwd - An initialized instance of the common forwarding structure that
+ *         includes everything needed to perform the forwarding operation.
  *
  ****************************************************************************/
 
-static void netfwd_forward_work(void *arg)
+static inline_function int netfwd_forward_notify(FAR struct forward_s *fwd)
 {
-  FAR struct net_driver_s *fwddev = (FAR struct net_driver_s *)arg;
-  int pending;
-
-  /* Coalesce concurrent forward requests without losing a wakeup. */
-
-  do
+#if CONFIG_NET_FORWARD_NCALLBACKS > 0
+  int n_conncb = devif_count_callbacks(fwd->f_dev->d_conncb, IPFWD_POLL);
+  if (n_conncb >= CONFIG_NET_FORWARD_NCALLBACKS)
     {
-      fwddev->d_fwdpending = 0;
-
-      netdev_txnotify_dev(fwddev, IPFWD_POLL);
-
-      pending = fwddev->d_fwdpending != 0;
+      nwarn("WARNING: Too many forwardings (%d >= %d)\n",
+            n_conncb, CONFIG_NET_FORWARD_NCALLBACKS);
+      return -ENOMEM;
     }
-  while (pending);
-}
+#endif
 
-/****************************************************************************
- * Public Functions
- ****************************************************************************/
+  /* Set up the callback in the connection */
+
+  fwd->f_cb = netfwd_callback_alloc(fwd->f_dev);
+  if (fwd->f_cb != NULL)
+    {
+      fwd->f_cb->flags = (IPFWD_POLL | NETDEV_DOWN);
+      fwd->f_cb->priv  = (FAR void *)fwd;
+      fwd->f_cb->event = netfwd_eventhandler;
+
+      /* Notify the device driver of the availability of TX data */
+
+      netdev_txnotify_dev(fwd->f_dev, IPFWD_POLL);
+      return OK;
+    }
+
+  return -ENOMEM;
+}
 
 /****************************************************************************
  * Name: netfwd_forward
@@ -361,74 +338,59 @@ static void netfwd_forward_work(void *arg)
 int netfwd_forward(FAR struct net_driver_s *dev, FAR struct forward_s *fwd)
 {
   FAR struct net_driver_s *fwddev;
-  int queue_work;
-  int continue_notify;
+  FAR struct iob_s *iob;
+  FAR uint8_t *buf;
+  unsigned int count;
+  int len;
+  int ret;
 
   DEBUGASSERT(fwd != NULL && fwd->f_iob != NULL && fwd->f_dev != NULL);
 
   fwddev = fwd->f_dev;
 
-  /* Set up the callback in the connection */
-
-  fwd->f_cb = netfwd_callback_alloc(fwddev);
-  if (fwd->f_cb != NULL)
+  if (fwddev == dev)
     {
-      fwd->f_cb->flags = (IPFWD_POLL | NETDEV_DOWN);
-      fwd->f_cb->priv  = (FAR void *)fwd;
-      fwd->f_cb->event = netfwd_eventhandler;
+      /* For 1722ACF cycle forwarding: no cross device, so no lock reordering
+       * or state save/restore needed since we already hold the device lock.
+       */
 
-      if (nxrmutex_trylock(&fwddev->d_lock) != OK)
-        {
-          /* Remember that at least one forward callback still needs a
-           * device poll even if the per-device worker is already queued.
-           */
+      ret = netfwd_forward_notify(fwd);
+    }
+  else
+    {
+      /* Save the current state of the source device, avoid damaging the
+       * current d_iob and other resources when forwarding recursion.
+       */
 
-          fwddev->d_fwdpending = NETDEV_FWD_RETRY;
-          queue_work = work_available(&fwddev->d_fwdwork);
+      iob = dev->d_iob;
+      buf = dev->d_buf;
+      len = dev->d_len;
 
-          if (queue_work)
-            {
-              work_queue(LPWORK, &fwddev->d_fwdwork, netfwd_forward_work,
-                         fwddev, 0);
-            }
-        }
-      else
-        {
-          FAR struct iob_s *iob = dev->d_iob;
-          FAR uint8_t *buf = dev->d_buf;
-          int len = dev->d_len;
+      dev->d_iob = NULL;
+      dev->d_buf = NULL;
+      dev->d_len = 0;
 
-          /* Save the current state of the device, avoid damaging the
-           * current d_iob and other resources when forwarding recursion
-           */
+      /* Break the source device lock to avoid AB-BA deadlock - two devices
+       * forwarding packets to each other could deadlock if both hold their
+       * own lock while trying to acquire the other's.
+       */
 
-          dev->d_iob = NULL;
-          dev->d_buf = NULL;
-          dev->d_len = 0;
+      netdev_breaklock(dev, &count);
+      netdev_lock(fwddev);
 
-          /* Notify the device driver of the availability of TX data */
+      /* Notify the device driver of the availability of TX data */
 
-          fwddev->d_fwdpending = 0;
-          netdev_txnotify_dev(fwddev, IPFWD_POLL);
-          continue_notify = fwddev->d_fwdpending != 0 &&
-                            work_available(&fwddev->d_fwdwork);
+      ret = netfwd_forward_notify(fwd);
 
-          dev->d_iob = iob;
-          dev->d_buf = buf;
-          dev->d_len = len;
-          nxrmutex_unlock(&fwddev->d_lock);
+      netdev_unlock(fwddev);
+      netdev_restorelock(dev, count);
 
-          if (continue_notify)
-            {
-              work_queue(LPWORK, &fwddev->d_fwdwork, netfwd_forward_work,
-                         fwddev, 0);
-            }
-        }
+      netdev_iob_release(dev);
 
-      return OK;
+      dev->d_iob = iob;
+      dev->d_buf = buf;
+      dev->d_len = len;
     }
 
-  return -EBUSY;
+  return ret;
 }
-
-#endif /* CONFIG_NET_IPFORWARD */

@@ -30,7 +30,6 @@
 #include <debug.h>
 
 #include <nuttx/clock.h>
-#include <nuttx/mutex.h>
 #include <nuttx/net/netconfig.h>
 #include <nuttx/net/netdev.h>
 #include <nuttx/net/net.h>
@@ -1001,23 +1000,6 @@ static int devif_poll_connections(FAR struct net_driver_s *dev,
 
       if (!bstop)
         {
-#ifdef CONFIG_NET_IPFORWARD
-          if ((1 << (i - 1)) == IPFWD_POLL &&
-              dev->d_fwdpending == NETDEV_FWD_MORE)
-            {
-              /* netfwd_eventhandler() can send only one forwarded packet
-               * per devif_conn_event() pass because it clears IPFWD_POLL
-               * from the event flags after selecting a packet.  If more
-               * forward callbacks are still queued on this device, keep the
-               * poll type armed so the next loop iteration drains the next
-               * callback immediately instead of waiting for another txavail
-               * wakeup.
-               */
-
-              continue;
-            }
-#endif
-
           dev->d_polltype &= ~(1 << (i - 1));
         }
     }
