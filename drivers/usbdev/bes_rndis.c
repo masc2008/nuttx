@@ -42,6 +42,7 @@
 
 #include <nuttx/queue.h>
 #include <nuttx/irq.h>
+#include <nuttx/mutex.h>
 #include <nuttx/spinlock.h>
 #include <nuttx/net/net.h>
 #include <nuttx/net/netdev.h>
@@ -171,6 +172,7 @@ struct rndis_dev_s
   bool rdreq_submitted;                  /* Indicates if the read request is submitted */
   bool rx_blocked;                       /* Indicates if we can receive packets on bulk in endpoint */
   bool connected;                        /* Connection status indicator */
+  bool txpoll_pending;                   /* Another txavail arrived while pollwork was busy */
 
   /* if report rndis link status too early, PC RNDIS net will init error */
   bool blockintr_ep;                     /* whether can report link status */
@@ -1377,21 +1379,36 @@ static int rndis_ifdown(FAR struct net_driver_s *dev)
 static void rndis_txavail_work(FAR void *arg)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)arg;
+  irqstate_t flags;
+  bool pending;
 
   rndis_do_iob_free(priv);
 
-  net_lock();
-
-  if (rndis_allocnetreq(priv))
+  do
     {
-      devif_poll(&priv->netdev, rndis_txpoll);
-      if (priv->net_req != NULL)
-        {
-          rndis_freenetreq(priv);
-        }
-    }
+      flags = enter_critical_section();
+      priv->txpoll_pending = false;
+      leave_critical_section(flags);
 
-  net_unlock();
+      netdev_lock(&priv->netdev);
+
+      if (rndis_allocnetreq(priv))
+        {
+          devif_poll(&priv->netdev, rndis_txpoll);
+          if (priv->net_req != NULL)
+            {
+              rndis_freenetreq(priv);
+            }
+        }
+
+      flags = enter_critical_section();
+      pending = priv->txpoll_pending ||
+                (priv->netdev.d_polltype != 0 && rndis_hasfreereqs(priv));
+      leave_critical_section(flags);
+
+      netdev_unlock(&priv->netdev);
+    }
+  while (pending);
 }
 
 /****************************************************************************
@@ -1408,11 +1425,18 @@ __attribute__((unused))
 static int rndis_txavail(FAR struct net_driver_s *dev)
 {
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)dev->d_private;
+  irqstate_t flags;
 
-  if (work_available(&priv->pollwork))
+  flags = enter_critical_section();
+  if (!work_available(&priv->pollwork))
     {
-      work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
+      priv->txpoll_pending = true;
+      leave_critical_section(flags);
+      return OK;
     }
+
+  leave_critical_section(flags);
+  work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
 
   return OK;
 }
