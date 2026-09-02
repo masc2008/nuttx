@@ -218,11 +218,13 @@ static int ipv4_in(FAR struct net_driver_s *dev)
 
         srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
         dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-        nerr("IPv4_ICMP_IN: len=%u src=%s dst=%s type=%u\n",
+        nerr("IPv4_ICMP_IN: len=%u src=%s dst=%s type=%u id=%u seq=%u\n",
              (unsigned)dev->d_len,
              inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
              inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
-             (unsigned)icmp->type);
+             (unsigned)icmp->type,
+             (unsigned)NTOHS(icmp->id),
+             (unsigned)NTOHS(icmp->seqno));
       }
     }
   /* Storing reception timestamp provided by realtime

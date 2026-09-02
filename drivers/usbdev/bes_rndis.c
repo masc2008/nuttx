@@ -1205,10 +1205,12 @@ static void rndis_rxdispatch(FAR void *arg)
 
             srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
             dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-            nerr("RNDIS_RX_ICMP: len=%u src=%s dst=%s\n",
+            nerr("RNDIS_RX_ICMP: len=%u src=%s dst=%s id=%u seq=%u\n",
                   (unsigned)priv->netdev.d_len,
                   inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                  inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+                  inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
+                  (unsigned)NTOHS(icmp->id),
+                  (unsigned)NTOHS(icmp->seqno));
           }
         }
 
@@ -1342,10 +1344,13 @@ static int rndis_transmit(FAR struct rndis_dev_s *priv)
 
                 srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
                 dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-                nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s\n",
+                nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s id=%u "
+                     "seq=%u\n",
                      (unsigned)priv->netdev.d_len,
                      inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                     inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+                     inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
+                     (unsigned)NTOHS(icmp->id),
+                     (unsigned)NTOHS(icmp->seqno));
               }
           }
       }
