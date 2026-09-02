@@ -171,9 +171,6 @@ void netfwd_poll(FAR struct net_driver_s *dev)
    */
 
   flags = devif_conn_event(dev, IPFWD_POLL, dev->d_conncb);
-  nerr("NETFWD_POLL: dev=%s flags=%08lx len=%u sndlen=%u poll=%08lx\n",
-       dev->d_ifname, (unsigned long)flags, dev->d_len, dev->d_sndlen,
-       (unsigned long)dev->d_polltype);
 
 #ifdef CONFIG_NET_6LOWPAN
   if ((flags & IPFWD_POLL) == 0)

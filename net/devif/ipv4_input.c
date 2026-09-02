@@ -83,6 +83,7 @@
 #ifdef CONFIG_NET_IPv4
 
 #include <sys/ioctl.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <debug.h>
 #include <string.h>
@@ -114,8 +115,128 @@
 #include "utils/utils.h"
 
 /****************************************************************************
+ * Private Types
+ ****************************************************************************/
+
+struct ping8_trace_s
+{
+  uint32_t reqs;
+  uint32_t replies;
+  uint32_t misses;
+  uint16_t last_req_seq;
+  uint16_t last_reply_seq;
+  bool     req_valid;
+  bool     reply_valid;
+};
+
+/****************************************************************************
  * Private Data
  ****************************************************************************/
+
+#define PING8_TRACE_ADDR             HTONL(0x08080808)
+#define PING8_TRACE_SUMMARY_INTERVAL 64
+
+static struct ping8_trace_s g_ping8_trace;
+
+/****************************************************************************
+ * Private Functions
+ ****************************************************************************/
+
+/****************************************************************************
+ * Name: ipv4_ping8_trace
+ ****************************************************************************/
+
+static void ipv4_ping8_trace(FAR struct ipv4_hdr_s *ipv4,
+                             FAR struct icmp_hdr_s *icmp)
+{
+  uint32_t srcaddr = net_ip4addr_conv32(ipv4->srcipaddr);
+  uint32_t dstaddr = net_ip4addr_conv32(ipv4->destipaddr);
+  uint16_t seq     = NTOHS(icmp->seqno);
+
+  if (icmp->type == ICMP_ECHO_REQUEST && dstaddr == PING8_TRACE_ADDR)
+    {
+      g_ping8_trace.reqs++;
+
+      if (g_ping8_trace.req_valid &&
+          seq != g_ping8_trace.last_req_seq &&
+          seq != (uint16_t)(g_ping8_trace.last_req_seq + 1))
+        {
+          nerr("PING8_REQ_JUMP: prev=%u cur=%u req=%lu reply=%lu miss=%lu\n",
+               (unsigned)g_ping8_trace.last_req_seq, (unsigned)seq,
+               (unsigned long)g_ping8_trace.reqs,
+               (unsigned long)g_ping8_trace.replies,
+               (unsigned long)g_ping8_trace.misses);
+        }
+
+      g_ping8_trace.last_req_seq = seq;
+      g_ping8_trace.req_valid    = true;
+
+      if ((g_ping8_trace.reqs % PING8_TRACE_SUMMARY_INTERVAL) == 0)
+        {
+          nerr("PING8_SUM: req=%lu reply=%lu miss=%lu last_req=%u "
+               "last_reply=%u outstanding=%ld\n",
+               (unsigned long)g_ping8_trace.reqs,
+               (unsigned long)g_ping8_trace.replies,
+               (unsigned long)g_ping8_trace.misses,
+               (unsigned)g_ping8_trace.last_req_seq,
+               (unsigned)g_ping8_trace.last_reply_seq,
+               (long)g_ping8_trace.reqs -
+               (long)g_ping8_trace.replies);
+        }
+    }
+  else if (icmp->type == ICMP_ECHO_REPLY && srcaddr == PING8_TRACE_ADDR)
+    {
+      g_ping8_trace.replies++;
+
+      if (g_ping8_trace.reply_valid &&
+          seq != g_ping8_trace.last_reply_seq &&
+          seq != (uint16_t)(g_ping8_trace.last_reply_seq + 1))
+        {
+          if ((uint16_t)(seq - g_ping8_trace.last_reply_seq) > 1)
+            {
+              uint16_t missed =
+                (uint16_t)(seq - g_ping8_trace.last_reply_seq - 1);
+
+              g_ping8_trace.misses += missed;
+              nerr("PING8_REPLY_GAP: prev=%u cur=%u gap=%u req=%lu "
+                   "reply=%lu miss=%lu outstanding=%ld\n",
+                   (unsigned)g_ping8_trace.last_reply_seq,
+                   (unsigned)seq, (unsigned)missed,
+                   (unsigned long)g_ping8_trace.reqs,
+                   (unsigned long)g_ping8_trace.replies,
+                   (unsigned long)g_ping8_trace.misses,
+                   (long)g_ping8_trace.reqs -
+                   (long)g_ping8_trace.replies);
+            }
+          else
+            {
+              nerr("PING8_REPLY_REORDER: prev=%u cur=%u req=%lu reply=%lu "
+                   "miss=%lu\n",
+                   (unsigned)g_ping8_trace.last_reply_seq,
+                   (unsigned)seq,
+                   (unsigned long)g_ping8_trace.reqs,
+                   (unsigned long)g_ping8_trace.replies,
+                   (unsigned long)g_ping8_trace.misses);
+            }
+        }
+
+      g_ping8_trace.last_reply_seq = seq;
+      g_ping8_trace.reply_valid    = true;
+
+      if ((g_ping8_trace.replies % PING8_TRACE_SUMMARY_INTERVAL) == 0)
+        {
+          nerr("PING8_SUM: req=%lu reply=%lu miss=%lu last_req=%u "
+               "last_reply=%u outstanding=%ld\n",
+               (unsigned long)g_ping8_trace.reqs,
+               (unsigned long)g_ping8_trace.replies,
+               (unsigned long)g_ping8_trace.misses,
+               (unsigned)g_ping8_trace.last_req_seq,
+               (unsigned)g_ping8_trace.last_reply_seq,
+               (long)g_ping8_trace.reqs -
+               (long)g_ping8_trace.replies);
+        }
+    }
+}
 
 /****************************************************************************
  * Private Functions
@@ -207,25 +328,7 @@ static int ipv4_in(FAR struct net_driver_s *dev)
   if (ipv4->proto == IP_PROTO_ICMP)
     {
       FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
-
-      if (icmp->type == ICMP_ECHO_REQUEST ||
-          icmp->type == ICMP_ECHO_REPLY)
-      {
-        struct in_addr srcaddr;
-        struct in_addr dstaddr;
-        char srcbuf[INET_ADDRSTRLEN];
-        char dstbuf[INET_ADDRSTRLEN];
-
-        srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
-        dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-        nerr("IPv4_ICMP_IN: len=%u src=%s dst=%s type=%u id=%u seq=%u\n",
-             (unsigned)dev->d_len,
-             inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-             inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
-             (unsigned)icmp->type,
-             (unsigned)NTOHS(icmp->id),
-             (unsigned)NTOHS(icmp->seqno));
-      }
+      ipv4_ping8_trace(ipv4, icmp);
     }
   /* Storing reception timestamp provided by realtime
    * if timestamp no provided by hardware.

@@ -1189,31 +1189,6 @@ static void rndis_rxdispatch(FAR void *arg)
 #ifdef CONFIG_NET_IPv4
   if (hdr->type == HTONS(ETHTYPE_IP))
     {
-      FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
-
-      if (ipv4->proto == IP_PROTO_ICMP)
-        {
-        FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
-
-        if (icmp->type == ICMP_ECHO_REQUEST ||
-            icmp->type == ICMP_ECHO_REPLY)
-          {
-            struct in_addr srcaddr;
-            struct in_addr dstaddr;
-            char srcbuf[INET_ADDRSTRLEN];
-            char dstbuf[INET_ADDRSTRLEN];
-
-            srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
-            dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-            nerr("RNDIS_RX_ICMP: len=%u src=%s dst=%s id=%u seq=%u\n",
-                  (unsigned)priv->netdev.d_len,
-                  inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                  inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
-                  (unsigned)NTOHS(icmp->id),
-                  (unsigned)NTOHS(icmp->seqno));
-          }
-        }
-
       NETDEV_RXIPV4(&priv->netdev);
 
       /* Receive an IPv4 packet from the network device */
@@ -1323,40 +1298,7 @@ static int rndis_transmit(FAR struct rndis_dev_s *priv)
     }
 
 #ifdef CONFIG_NET_IPv4
-  {
-    FAR struct eth_hdr_s *hdr = (FAR struct eth_hdr_s *)NETLLBUF;
-
-    if (hdr->type == HTONS(ETHTYPE_IP))
-      {
-        FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
-
-        if (ipv4->proto == IP_PROTO_ICMP)
-          {
-            FAR struct icmp_hdr_s *icmp =
-              IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
-
-            if (icmp->type == ICMP_ECHO_REPLY)
-              {
-                struct in_addr srcaddr;
-                struct in_addr dstaddr;
-                char srcbuf[INET_ADDRSTRLEN];
-                char dstbuf[INET_ADDRSTRLEN];
-
-                srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
-                dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-                nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s id=%u "
-                     "seq=%u\n",
-                     (unsigned)priv->netdev.d_len,
-                     inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                     inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
-                     (unsigned)NTOHS(icmp->id),
-                     (unsigned)NTOHS(icmp->seqno));
-              }
-          }
-      }
-  }
 #endif
-
   /* Queue the packet */
 
   rndis_fillrequest(priv, priv->net_req);
