@@ -965,8 +965,9 @@ static void rndis_iob2buf(FAR struct rndis_dev_s *priv,
                           FAR struct rndis_req_s *req)
 {
   uint16_t llhdrlen = NET_LL_HDRLEN(&priv->netdev);
-  struct iob_s *iob;
-  FAR uint8_t *hdr;
+  FAR struct iob_s *iob = req->iob;
+  FAR uint8_t *buf;
+  uintptr_t start;
 
   /*  ----------------------------------------------------------------
    *  |<--- CONFIG_NET_LL_GUARDSIZE ---->|<-- io_len/io_pktlen(0) -->|
@@ -977,24 +978,30 @@ static void rndis_iob2buf(FAR struct rndis_dev_s *priv,
    *  ---------------------------------------------------------------|
    */
 
-  iob = req->iob;
-  if (req->iob->io_flink == NULL)
+  if (iob->io_flink == NULL &&
+      iob->io_offset >= llhdrlen + RNDIS_PACKET_HDR_SIZE)
     {
-      DEBUGASSERT((iob->io_offset & 0x1) == 0);
-      /* bes patch:  io_data has "enough" space for the rndis hdr*/
-      hdr = &iob->io_data[iob->io_offset];
-      hdr -= (llhdrlen + RNDIS_PACKET_HDR_SIZE);
-      req->req->buf = hdr; //XXX: not aligned to 4bytes yet!!!
-      req->req->len = CONFIG_RNDIS_BULKIN_REQLEN;
+      buf = &iob->io_data[iob->io_offset - llhdrlen -
+                          RNDIS_PACKET_HDR_SIZE];
+      start = (uintptr_t)buf;
+
+      if ((start & 0x3) == 0)
+        {
+          req->req->buf = buf;
+          req->req->len = CONFIG_RNDIS_BULKIN_REQLEN;
+          return;
+        }
     }
-  else
-    {
-      req->req->buf = req->buf;
-      iob_copyout(&req->req->buf[RNDIS_PACKET_HDR_SIZE], req->iob,
-                  req->iob->io_pktlen + llhdrlen, -llhdrlen);
-      iob_free_chain(req->iob);
-      req->iob = NULL;
-    }
+
+  /* Fall back to the request buffer when headroom is short or the zero-copy
+   * prepend area is not 4-byte aligned.
+   */
+
+  req->req->buf = req->buf;
+  iob_copyout(&req->req->buf[RNDIS_PACKET_HDR_SIZE], iob,
+              iob->io_pktlen + llhdrlen, -llhdrlen);
+  iob_free_chain(iob);
+  req->iob = NULL;
 }
 
 /****************************************************************************
@@ -1101,8 +1108,7 @@ static uint16_t rndis_fillrequest(FAR struct rndis_dev_s *priv,
                                   FAR struct rndis_req_s *req)
 {
   size_t datalen;
-  struct iob_s *iob;
-  int pads = 0;
+  FAR struct rndis_packet_msg *msg;
 
   req->req->len = 0;
 
@@ -1113,29 +1119,19 @@ static uint16_t rndis_fillrequest(FAR struct rndis_dev_s *priv,
       /* Move iob from netdev to net_req and send the required headers */
 
       req->iob = priv->netdev.d_iob;
-      iob = req->iob;
       netdev_iob_clear(&priv->netdev);
       rndis_iob2buf(priv, req);
-      FAR struct rndis_packet_msg *msg;
       msg = (FAR struct rndis_packet_msg *)req->req->buf;
-      if (((int)msg & 0x3) != 0) {
-        ninfo("%s:%d, msg 0x%p, iob 0x%p, %d\n",
-             __func__, __LINE__, msg,
-             iob->io_data, iob->io_offset);
-        msg = (struct rndis_packet_msg *)((char *)msg - 2);
-        pads = 2;
-        req->req->buf = (FAR uint8_t *)msg;
-      }
-      DEBUGASSERT(((int)msg & 0x3) == 0);
+      DEBUGASSERT((((uintptr_t)msg) & 0x3) == 0);
 
-      memset(msg, 0, RNDIS_PACKET_HDR_SIZE + pads);
+      memset(msg, 0, RNDIS_PACKET_HDR_SIZE);
       msg->msgtype    = RNDIS_PACKET_MSG;
-      msg->msglen     = RNDIS_PACKET_HDR_SIZE + datalen + pads;
-      msg->dataoffset = RNDIS_PACKET_HDR_SIZE - 8 + pads;
+      msg->msglen     = RNDIS_PACKET_HDR_SIZE + datalen;
+      msg->dataoffset = RNDIS_PACKET_HDR_SIZE - 8;
       msg->datalen    = datalen;
 
       req->req->flags = USBDEV_REQFLAGS_NULLPKT;
-      req->req->len   = datalen + RNDIS_PACKET_HDR_SIZE + pads;
+      req->req->len   = datalen + RNDIS_PACKET_HDR_SIZE;
     }
 
   return req->req->len;
@@ -1189,7 +1185,8 @@ static void rndis_rxdispatch(FAR void *arg)
     {
       FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
 
-      {
+      if (ipv4->proto == IP_PROTO_ICMP)
+        {
         FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
 
         if (icmp->type == ICMP_ECHO_REQUEST ||
@@ -1207,7 +1204,7 @@ static void rndis_rxdispatch(FAR void *arg)
                   inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
                   inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
           }
-      }
+        }
 
       NETDEV_RXIPV4(&priv->netdev);
 
@@ -1324,21 +1321,26 @@ static int rndis_transmit(FAR struct rndis_dev_s *priv)
     if (hdr->type == HTONS(ETHTYPE_IP))
       {
         FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
-        FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
 
-        if (icmp->type == ICMP_ECHO_REPLY)
+        if (ipv4->proto == IP_PROTO_ICMP)
           {
-            struct in_addr srcaddr;
-            struct in_addr dstaddr;
-            char srcbuf[INET_ADDRSTRLEN];
-            char dstbuf[INET_ADDRSTRLEN];
+            FAR struct icmp_hdr_s *icmp =
+              IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
 
-            srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
-            dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
-            nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s\n",
-                 (unsigned)priv->netdev.d_len,
-                 inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                 inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+            if (icmp->type == ICMP_ECHO_REPLY)
+              {
+                struct in_addr srcaddr;
+                struct in_addr dstaddr;
+                char srcbuf[INET_ADDRSTRLEN];
+                char dstbuf[INET_ADDRSTRLEN];
+
+                srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
+                dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
+                nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s\n",
+                     (unsigned)priv->netdev.d_len,
+                     inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
+                     inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+              }
           }
       }
   }
