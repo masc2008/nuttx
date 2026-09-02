@@ -907,17 +907,11 @@ static void rndis_sendnetreq(FAR struct rndis_dev_s *priv)
 
   DEBUGASSERT(priv->net_req != NULL);
 
-  nerr("RNDIS_SENDNETREQ: len=%u req=%p iob=%p connected=%u\n",
-       priv->net_req->req->len, priv->net_req, priv->net_req->iob,
-       priv->connected);
-
   priv->net_req->req->priv = priv->net_req;
   ret = EP_SUBMIT(priv->epbulkin, priv->net_req->req);
   if (ret == OK)
     {
       priv->txsubmit_count++;
-      nerr("RNDIS_SENDNETREQ_OK: submit=%" PRIu32 " free=%d\n",
-           priv->txsubmit_count, sq_count(&priv->reqlist));
     }
   else
     {
@@ -1401,9 +1395,6 @@ static void rndis_txavail_work(FAR void *arg)
   irqstate_t flags;
   bool txpoll_pending;
 
-  nerr("RNDIS_TXAVAIL_WORK_IN: pending=%u net_req=%p free=%d poll=%08lx\n",
-       priv->txpoll_pending, priv->net_req, sq_count(&priv->reqlist),
-       (unsigned long)priv->netdev.d_polltype);
   rndis_do_iob_free(priv);
 
   netdev_lock(&priv->netdev);
@@ -1411,17 +1402,10 @@ static void rndis_txavail_work(FAR void *arg)
   if (rndis_allocnetreq(priv))
     {
       devif_poll(&priv->netdev, rndis_txpoll);
-      nerr("RNDIS_TXAVAIL_WORK_POLL: len=%u sndlen=%u net_req=%p poll=%08lx\n",
-           priv->netdev.d_len, priv->netdev.d_sndlen, priv->net_req,
-           (unsigned long)priv->netdev.d_polltype);
       if (priv->net_req != NULL)
         {
           rndis_freenetreq(priv);
         }
-    }
-  else
-    {
-      nerr("RNDIS_TXAVAIL_WORK_NOREQ: free=%d\n", sq_count(&priv->reqlist));
     }
 
   netdev_unlock(&priv->netdev);
@@ -1433,8 +1417,6 @@ static void rndis_txavail_work(FAR void *arg)
 
   if (txpoll_pending)
     {
-      nerr("RNDIS_TXAVAIL_WORK_REQUEUE: poll=%08lx\n",
-           (unsigned long)priv->netdev.d_polltype);
       if (work_queue_next(ETHWORK, &priv->pollwork, rndis_txavail_work,
                           priv, 0) < 0)
         {
@@ -1444,9 +1426,6 @@ static void rndis_txavail_work(FAR void *arg)
         }
     }
 
-  nerr("RNDIS_TXAVAIL_WORK_OUT: pending=%u net_req=%p free=%d poll=%08lx\n",
-       priv->txpoll_pending, priv->net_req, sq_count(&priv->reqlist),
-       (unsigned long)priv->netdev.d_polltype);
 }
 
 /****************************************************************************
@@ -1465,9 +1444,6 @@ static int rndis_txavail(FAR struct net_driver_s *dev)
   FAR struct rndis_dev_s *priv = (FAR struct rndis_dev_s *)dev->d_private;
   irqstate_t flags;
 
-  nerr("RNDIS_TXAVAIL: work=%u pending=%u poll=%08lx free=%d\n",
-       work_available(&priv->pollwork), priv->txpoll_pending,
-       (unsigned long)dev->d_polltype, sq_count(&priv->reqlist));
   if (work_available(&priv->pollwork))
     {
       work_queue(ETHWORK, &priv->pollwork, rndis_txavail_work, priv, 0);
@@ -2074,8 +2050,6 @@ static void rndis_wrcomplete(FAR struct usbdev_ep_s *ep,
   /* Return the write request to the free list */
 
   flags = enter_critical_section();
-  nerr("RNDIS_WRCOMPLETE: result=%d len=%u req=%p free=%d\n",
-       req->result, req->xfrd, reqcontainer, sq_count(&priv->reqlist));
   rndis_freewrreq(priv, reqcontainer);
   if (rndis_hasfreereqs(priv))
     {

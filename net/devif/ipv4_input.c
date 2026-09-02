@@ -134,7 +134,6 @@ struct ping8_trace_s
  ****************************************************************************/
 
 #define PING8_TRACE_ADDR             HTONL(0x08080808)
-#define PING8_TRACE_SUMMARY_INTERVAL 64
 
 static struct ping8_trace_s g_ping8_trace;
 
@@ -157,32 +156,8 @@ static void ipv4_ping8_trace(FAR struct ipv4_hdr_s *ipv4,
     {
       g_ping8_trace.reqs++;
 
-      if (g_ping8_trace.req_valid &&
-          seq != g_ping8_trace.last_req_seq &&
-          seq != (uint16_t)(g_ping8_trace.last_req_seq + 1))
-        {
-          nerr("PING8_REQ_JUMP: prev=%u cur=%u req=%lu reply=%lu miss=%lu\n",
-               (unsigned)g_ping8_trace.last_req_seq, (unsigned)seq,
-               (unsigned long)g_ping8_trace.reqs,
-               (unsigned long)g_ping8_trace.replies,
-               (unsigned long)g_ping8_trace.misses);
-        }
-
       g_ping8_trace.last_req_seq = seq;
       g_ping8_trace.req_valid    = true;
-
-      if ((g_ping8_trace.reqs % PING8_TRACE_SUMMARY_INTERVAL) == 0)
-        {
-          nerr("PING8_SUM: req=%lu reply=%lu miss=%lu last_req=%u "
-               "last_reply=%u outstanding=%ld\n",
-               (unsigned long)g_ping8_trace.reqs,
-               (unsigned long)g_ping8_trace.replies,
-               (unsigned long)g_ping8_trace.misses,
-               (unsigned)g_ping8_trace.last_req_seq,
-               (unsigned)g_ping8_trace.last_reply_seq,
-               (long)g_ping8_trace.reqs -
-               (long)g_ping8_trace.replies);
-        }
     }
   else if (icmp->type == ICMP_ECHO_REPLY && srcaddr == PING8_TRACE_ADDR)
     {
@@ -208,33 +183,10 @@ static void ipv4_ping8_trace(FAR struct ipv4_hdr_s *ipv4,
                    (long)g_ping8_trace.reqs -
                    (long)g_ping8_trace.replies);
             }
-          else
-            {
-              nerr("PING8_REPLY_REORDER: prev=%u cur=%u req=%lu reply=%lu "
-                   "miss=%lu\n",
-                   (unsigned)g_ping8_trace.last_reply_seq,
-                   (unsigned)seq,
-                   (unsigned long)g_ping8_trace.reqs,
-                   (unsigned long)g_ping8_trace.replies,
-                   (unsigned long)g_ping8_trace.misses);
-            }
         }
 
       g_ping8_trace.last_reply_seq = seq;
       g_ping8_trace.reply_valid    = true;
-
-      if ((g_ping8_trace.replies % PING8_TRACE_SUMMARY_INTERVAL) == 0)
-        {
-          nerr("PING8_SUM: req=%lu reply=%lu miss=%lu last_req=%u "
-               "last_reply=%u outstanding=%ld\n",
-               (unsigned long)g_ping8_trace.reqs,
-               (unsigned long)g_ping8_trace.replies,
-               (unsigned long)g_ping8_trace.misses,
-               (unsigned)g_ping8_trace.last_req_seq,
-               (unsigned)g_ping8_trace.last_reply_seq,
-               (long)g_ping8_trace.reqs -
-               (long)g_ping8_trace.replies);
-        }
     }
 }
 
