@@ -1308,6 +1308,7 @@ static int rndis_txpoll(FAR struct net_driver_s *dev)
 
 static int rndis_transmit(FAR struct rndis_dev_s *priv)
 {
+  FAR struct net_driver_s *dev = &priv->netdev;
   int ret = OK;
 
   if (!priv->connected)
@@ -1315,6 +1316,33 @@ static int rndis_transmit(FAR struct rndis_dev_s *priv)
       netdev_iob_release(&priv->netdev);
       return OK;
     }
+
+#ifdef CONFIG_NET_IPv4
+  {
+    FAR struct eth_hdr_s *hdr = (FAR struct eth_hdr_s *)NETLLBUF;
+
+    if (hdr->type == HTONS(ETHTYPE_IP))
+      {
+        FAR struct ipv4_hdr_s *ipv4 = IPv4BUF;
+        FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
+
+        if (icmp->type == ICMP_ECHO_REPLY)
+          {
+            struct in_addr srcaddr;
+            struct in_addr dstaddr;
+            char srcbuf[INET_ADDRSTRLEN];
+            char dstbuf[INET_ADDRSTRLEN];
+
+            srcaddr.s_addr = net_ip4addr_conv32(ipv4->srcipaddr);
+            dstaddr.s_addr = net_ip4addr_conv32(ipv4->destipaddr);
+            nerr("RNDIS_TX_ICMP_REPLY: len=%u src=%s dst=%s\n",
+                 (unsigned)priv->netdev.d_len,
+                 inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
+                 inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)));
+          }
+      }
+  }
+#endif
 
   /* Queue the packet */
 
