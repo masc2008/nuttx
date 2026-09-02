@@ -509,6 +509,22 @@ static inline_function int devif_poll_icmpv6(FAR struct net_driver_s *dev,
  ****************************************************************************/
 
 #ifdef CONFIG_NET_IPFORWARD
+static inline_function bool
+devif_poll_forward_pending(FAR struct net_driver_s *dev)
+{
+  FAR struct devif_callback_s *cb;
+
+  for (cb = dev->d_conncb; cb != NULL; cb = cb->nxtconn)
+    {
+      if (cb->event != NULL && (cb->flags & IPFWD_POLL) != 0)
+        {
+          return true;
+        }
+    }
+
+  return false;
+}
+
 static inline_function int devif_poll_forward(FAR struct net_driver_s *dev,
                                               devif_poll_callback_t callback)
 {
@@ -991,6 +1007,10 @@ static int devif_poll_connections(FAR struct net_driver_s *dev,
 
           case IPFWD_POLL:
             bstop = devif_poll_forward(dev, callback);
+            if (!bstop && devif_poll_forward_pending(dev))
+              {
+                bstop = true;
+              }
             break;
 #endif
           default:
