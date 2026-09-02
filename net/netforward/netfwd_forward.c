@@ -125,13 +125,16 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
 {
   FAR struct forward_s *fwd = pvpriv;
 
-  ninfo("flags: %" PRIx32 "\n", flags);
   DEBUGASSERT(fwd != NULL && fwd->f_iob != NULL && fwd->f_dev != NULL);
 
   /* Make sure that this is from the forwarding device */
 
   if (dev == fwd->f_dev)
     {
+      nerr("NETFWD_EVT: dev=%s flags=%08lx sndlen=%u iob=%p pkt=%u cb=%p\n",
+           dev->d_ifname, (unsigned long)flags, dev->d_sndlen, fwd->f_iob,
+           fwd->f_iob ? fwd->f_iob->io_pktlen : 0, fwd->f_cb);
+
       /* If the network device has gone down, then we will have terminate
        * the wait now with an error.
        */
@@ -156,6 +159,8 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
            * Wait for the next polling cycle and check again.
            */
 
+          nerr("NETFWD_BUSY: dev=%s flags=%08lx sndlen=%u\n",
+               dev->d_ifname, (unsigned long)flags, dev->d_sndlen);
           return flags;
         }
 
@@ -165,6 +170,8 @@ static uint32_t netfwd_eventhandler(FAR struct net_driver_s *dev,
         {
           /* Copy the user data into d_appdata and send it. */
 
+          nerr("NETFWD_SEND: dev=%s pkt=%u iob=%p\n",
+               dev->d_ifname, fwd->f_iob->io_pktlen, fwd->f_iob);
           devif_forward(fwd);
           flags &= ~IPFWD_POLL;
 
@@ -235,6 +242,10 @@ static inline_function int netfwd_forward_notify(FAR struct forward_s *fwd)
       fwd->f_cb->priv  = (FAR void *)fwd;
       fwd->f_cb->event = netfwd_eventhandler;
 
+      nerr("NETFWD_NOTIFY: dev=%s cb=%p iob=%p pkt=%u\n",
+           fwd->f_dev->d_ifname, fwd->f_cb, fwd->f_iob,
+           fwd->f_iob ? fwd->f_iob->io_pktlen : 0);
+
       /* Notify the device driver of the availability of TX data */
 
       netdev_txnotify_dev(fwd->f_dev, IPFWD_POLL);
@@ -283,6 +294,9 @@ int netfwd_forward(FAR struct net_driver_s *dev, FAR struct forward_s *fwd)
   DEBUGASSERT(fwd != NULL && fwd->f_iob != NULL && fwd->f_dev != NULL);
 
   fwddev = fwd->f_dev;
+  nerr("NETFWD_FORWARD: src=%s dst=%s iob=%p pkt=%u\n",
+       dev->d_ifname, fwddev->d_ifname, fwd->f_iob,
+       fwd->f_iob ? fwd->f_iob->io_pktlen : 0);
 
   if (fwddev == dev)
     {
