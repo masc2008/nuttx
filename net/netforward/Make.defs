@@ -22,9 +22,18 @@
 
 # IP forwarding source files
 
-ifeq ($(CONFIG_NET_IPFORWARD),y)
+ifneq ($(filter y,$(CONFIG_NET_FORWARD) $(CONFIG_NET_IPFORWARD) $(CONFIG_NET_CANFORWARD)),)
 
 NET_CSRCS += netfwd_alloc.c netfwd_forward.c netfwd_poll.c
+
+ifeq ($(CONFIG_NET_CANFORWARD),y)
+NET_CSRCS += can_forward.c
+ifeq ($(CONFIG_NET_CANFORWARD_IEEE1722ACF),y)
+NET_CSRCS += ieee1722acf_send.c
+endif
+endif
+
+ifeq ($(CONFIG_NET_IPFORWARD),y)
 
 ifeq ($(CONFIG_NET_IPv4),y)
 NET_CSRCS += ipv4_forward.c
@@ -32,6 +41,8 @@ endif
 
 ifeq ($(CONFIG_NET_IPv6),y)
 NET_CSRCS += ipv6_forward.c
+endif
+
 endif
 
 ifeq ($(CONFIG_NET_STATISTICS),y)

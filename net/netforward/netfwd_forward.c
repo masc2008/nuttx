@@ -50,74 +50,6 @@
  ****************************************************************************/
 
 /****************************************************************************
- * Public Functions
- ****************************************************************************/
-
-/****************************************************************************
- * Name: ipforward_enable
- *
- * Description:
- *   Enable forward function on a network device.
- *
- * Input Parameters:
- *   dev   - The device on which will be enabled forward function.
- *
- * Returned Value:
- *   Zero is returned if forward function is successfully enabled on the device;
- *   A negated errno value is returned if failed.
- *
- ****************************************************************************/
-
-int ipforward_enable(FAR struct net_driver_s *dev)
-{
-  net_lock();
-
-  if (IFF_IS_FORWARD(dev->d_flags))
-    {
-      nwarn("WARNING: FORWARD was already enabled for %s!\n", dev->d_ifname);
-      net_unlock();
-      return -EEXIST;
-    }
-
-  IFF_SET_FORWARD(dev->d_flags);
-
-  net_unlock();
-  return OK;
-}
-
-/****************************************************************************
- * Name: ipforward_disable
- *
- * Description:
- *   Disable forward function on a network device.
- *
- * Input Parameters:
- *   dev   - The device on which the ipforward function will be disabled.
- *
- * Returned Value:
- *   Zero is returned if ipforward function is successfully disabled on the device;
- *   A negated errno value is returned if failed.
- *
- ****************************************************************************/
-
-int ipforward_disable(FAR struct net_driver_s *dev)
-{
-  net_lock();
-
-  if (!IFF_IS_FORWARD(dev->d_flags))
-    {
-      nwarn("WARNING: ipforward was not enabled for %s!\n", dev->d_ifname);
-      net_unlock();
-      return -ENODEV;
-    }
-
-  IFF_CLR_FORWARD(dev->d_flags);
-
-  net_unlock();
-  return OK;
-}
-
-/****************************************************************************
  * Name: forward_ipselect
  *
  * Description:
@@ -313,6 +245,10 @@ static inline_function int netfwd_forward_notify(FAR struct forward_s *fwd)
 }
 
 /****************************************************************************
+ * Public Functions
+ ****************************************************************************/
+
+/****************************************************************************
  * Name: netfwd_forward
  *
  * Description:
@@ -370,7 +306,7 @@ int netfwd_forward(FAR struct net_driver_s *dev, FAR struct forward_s *fwd)
       dev->d_buf = NULL;
       dev->d_len = 0;
 
-      /* Break the source device lock to avoid AB-BA deadlock - two devices
+      /* Break the source device lock to avoid AB-BA deadlock — two devices
        * forwarding packets to each other could deadlock if both hold their
        * own lock while trying to acquire the other's.
        */

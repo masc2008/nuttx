@@ -22,15 +22,25 @@
 
 # IP forwarding source files
 
-if(CONFIG_NET_IPFORWARD)
+if(CONFIG_NET_FORWARD OR CONFIG_NET_IPFORWARD OR CONFIG_NET_CANFORWARD)
   set(SRCS netfwd_alloc.c netfwd_forward.c netfwd_poll.c)
 
-  if(CONFIG_NET_IPv4)
-    list(APPEND SRCS ipv4_forward.c)
+  if(CONFIG_NET_CANFORWARD)
+    list(APPEND SRCS can_forward.c)
+
+    if(CONFIG_NET_CANFORWARD_IEEE1722ACF)
+      list(APPEND SRCS ieee1722acf_send.c)
+    endif()
   endif()
 
-  if(CONFIG_NET_IPv6)
-    list(APPEND SRCS ipv6_forward.c)
+  if(CONFIG_NET_IPFORWARD)
+    if(CONFIG_NET_IPv4)
+      list(APPEND SRCS ipv4_forward.c)
+    endif()
+
+    if(CONFIG_NET_IPv6)
+      list(APPEND SRCS ipv6_forward.c)
+    endif()
   endif()
 
   if(CONFIG_NET_STATISTICS)

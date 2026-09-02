@@ -3,13 +3,64 @@
 # see the file kconfig-language.txt in the NuttX tools repository.
 #
 
+config NET_FORWARD
+	bool
+	default n
+	default y if NET_IPFORWARD || NET_CANFORWARD
+	---help---
+		Enable forwarding function.
+
+config NET_FORWARD_NCALLBACKS
+	int "Temporary cached forward callbacks max number"
+	default 0
+	depends on NET_FORWARD
+	---help---
+		Default temporary cached forward callbacks max number for each
+		device to avoid overconsumption. Zero means no limit.
+
 config NET_IPFORWARD
 	bool "Enable L2 forwarding"
 	default n
+	select NET_FORWARD
 	---help---
 		Enable forwarding of packets.  Packets received with IP addresses
 		that are not supported by this platform will be forwarded to the
 		appropriate network device.  Routing table support may be required.
+
+config NET_CANFORWARD
+	bool "Enable CAN forward function"
+	default n
+	depends on NET_CAN
+	select NET_FORWARD
+	---help---
+		Enable CAN forward function. Packets received will be forwarded to the
+		appropriate network device. Routing table support is required.
+
+config NET_CANFORWARD_IEEE1722ACF
+	bool "Enable ieee1722 acf function support"
+	default n
+	depends on NET_CANFORWARD
+
+config NET_IEEE1722ACF_CAN_RX_TIMESTAMP
+	bool "Reuse CAN IOB receive timestamp for ACF CAN message"
+	default n
+	depends on NET_CANFORWARD_IEEE1722ACF && NET_TIMESTAMP
+	---help---
+		When enabled, the IEEE 1722 ACF CAN message timestamp will
+		prefer the receive timestamp already carried in the source
+		CAN IOB (io_time) if it is valid (non-zero).  This provides
+		a more accurate timestamp when the CAN frame was received
+		through a gateway route with hardware RX timestamping.
+		If the IOB timestamp is not valid, it falls back to reading
+		the stream PTP / system clock.
+
+config NET_IEEE1722_PKTSIZE
+	int "IEEE 1722 packet buffer size"
+	default NET_ETH_PKTSIZE
+	depends on NET_CANFORWARD_IEEE1722ACF
+	range 0 NET_ETH_PKTSIZE
+	---help---
+		Packet buffer size for IEEE 1722 (Audio Video Bridging) packets.
 
 config NET_IPFORWARD_BROADCAST
 	bool "Forward broadcast/multicast packets"
@@ -22,7 +73,7 @@ config NET_IPFORWARD_BROADCAST
 config NET_FORWARD_NSTRUCT
 	int "Number of pre-allocated forwarding structures"
 	default 4
-	depends on NET_IPFORWARD
+	depends on NET_FORWARD
 	---help---
 		When packets are forwarded from on device to another, a structure
 		must be allocated to hold the state of forwarding across several
