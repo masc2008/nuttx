@@ -965,11 +965,9 @@ static uint8_t g_mac_addr[6] =
   netdev_lower_register(netdev, lltype);
   if (netdev->netdev.d_ifup(&netdev->netdev) == OK)
     {
-      netdev->netdev.d_flags = IFF_RUNNING | IFF_UP;
+      IFF_SET_RUNNING(netdev->netdev.d_flags);
+      IFF_SET_UP(netdev->netdev.d_flags);
     }
-#ifdef CONFIG_NET_IPFORWARD
-  ipforward_enable(&netdev->netdev);
-#endif
   return drv;
 }
 

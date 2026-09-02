@@ -120,10 +120,16 @@ int nat_enable(FAR struct net_driver_s *dev)
   if (IFF_IS_NAT(dev->d_flags))
     {
       nwarn("WARNING: NAT was already enabled for %s!\n", dev->d_ifname);
+      nat_unlock();
       return -EEXIST;
     }
 
   IFF_SET_NAT(dev->d_flags);
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+  IFF_CLR_NOSRC_FORWARD(dev->d_flags);
+  IFF_CLR_NODST_FORWARD(dev->d_flags);
+#endif
   nat_unlock();
   return OK;
 }
@@ -163,6 +169,11 @@ int nat_disable(FAR struct net_driver_s *dev)
 #endif
 
   IFF_CLR_NAT(dev->d_flags);
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+  IFF_SET_NOSRC_FORWARD(dev->d_flags);
+  IFF_SET_NODST_FORWARD(dev->d_flags);
+#endif
   nat_unlock();
   return OK;
 }

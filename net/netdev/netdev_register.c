@@ -406,6 +406,12 @@ int netdev_register(FAR struct net_driver_s *dev, enum net_lltype_e lltype)
             return -EINVAL;
         }
 
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+      IFF_SET_NOSRC_FORWARD(flags);
+      IFF_SET_NODST_FORWARD(flags);
+#endif
+
       /* Update the package length.  A network driver may provide custom
        * values for MAC header length and for the maximum packet size.  Some
        * driver implementations (for example, the simulator) will require

@@ -244,10 +244,6 @@ void RIL_RegisterInterfaceStateUpdate(intf_state_update_cb_t cb);
 
 bool RIL_InterfaceGetState(char *name);
 
-int ipforward_enable(FAR struct net_driver_s *dev);
-
-int ipforward_disable(FAR struct net_driver_s *dev);
-
 int nat_enable(FAR struct net_driver_s *dev);
 
 int nat_disable(FAR struct net_driver_s *dev);
@@ -2661,8 +2657,10 @@ static void usbclass_unbind(FAR struct usbdevclass_driver_s *driver,
       priv->connected = false;
       rndis_do_iob_free(priv);
 
-#ifdef CONFIG_NET_NAT
-      ipforward_disable(&priv->netdev);
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+      IFF_SET_NOSRC_FORWARD(priv->netdev.d_flags);
+      IFF_SET_NODST_FORWARD(priv->netdev.d_flags);
 #endif
       netdev_carrier_off(&priv->netdev);
 
@@ -3276,10 +3274,12 @@ static int usbclass_classobject(int minor,
       if (g_media_netdev)
         {
           nat_enable(g_media_netdev);
-          ipforward_enable(g_media_netdev);
         }
-
-      ipforward_enable(&priv->netdev);
+#endif
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+      IFF_CLR_NOSRC_FORWARD(priv->netdev.d_flags);
+      IFF_CLR_NODST_FORWARD(priv->netdev.d_flags);
 #endif
       g_rndis_netdev = &priv->netdev;
 
@@ -3305,8 +3305,13 @@ static void usbclass_uninitialize(FAR struct usbdevclass_driver_s *classdev)
   if (g_media_netdev)
     {
       nat_disable(g_media_netdev);
-      ipforward_disable(g_media_netdev);
     }
+#endif
+
+#if defined(CONFIG_NET_FORWARD) || defined(CONFIG_NET_IPFORWARD) || \
+    defined(CONFIG_NET_CANFORWARD)
+  IFF_SET_NOSRC_FORWARD(priv->netdev.d_flags);
+  IFF_SET_NODST_FORWARD(priv->netdev.d_flags);
 #endif
 
   if (priv->rx_req)
@@ -3499,7 +3504,9 @@ void rndis_ip_stream_enable(bool enable)
 void rndis_set_media_netdev(FAR struct net_driver_s *netdev)
 {
   if (netdev)
-    g_media_netdev = netdev;
+    {
+      g_media_netdev = netdev;
+    }
 }
 
 #if defined(CONFIG_BES_MODEM)

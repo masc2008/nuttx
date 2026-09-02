@@ -204,6 +204,26 @@ static int ipv4_in(FAR struct net_driver_s *dev)
   uint16_t totlen;
   int ret = OK;
 
+  {
+    FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
+
+    if (icmp->type == ICMP_ECHO_REQUEST ||
+        icmp->type == ICMP_ECHO_REPLY)
+      {
+        struct in_addr srcaddr;
+        struct in_addr dstaddr;
+        char srcbuf[INET_ADDRSTRLEN];
+        char dstbuf[INET_ADDRSTRLEN];
+
+        srcaddr.s_addr = srcipaddr;
+        dstaddr.s_addr = destipaddr;
+        nerr("IPv4_ICMP_IN: len=%u src=%s dst=%s type=%u\n",
+              (unsigned)dev->d_len,
+              inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
+              inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
+              (unsigned)icmp->type);
+      }
+  }
   /* Storing reception timestamp provided by realtime
    * if timestamp no provided by hardware.
    */
@@ -514,26 +534,6 @@ static int ipv4_in(FAR struct net_driver_s *dev)
   /* Check for ICMP input */
 
       case IP_PROTO_ICMP:  /* ICMP input */
-        {
-          FAR struct icmp_hdr_s *icmp = IPBUF((ipv4->vhl & IPv4_HLMASK) << 2);
-
-          if (icmp->type == ICMP_ECHO_REQUEST ||
-              icmp->type == ICMP_ECHO_REPLY)
-            {
-              struct in_addr srcaddr;
-              struct in_addr dstaddr;
-              char srcbuf[INET_ADDRSTRLEN];
-              char dstbuf[INET_ADDRSTRLEN];
-
-              srcaddr.s_addr = srcipaddr;
-              dstaddr.s_addr = destipaddr;
-              nerr("IPv4_ICMP_IN: len=%u src=%s dst=%s type=%u\n",
-                    (unsigned)dev->d_len,
-                    inet_ntoa_r(srcaddr, srcbuf, sizeof(srcbuf)),
-                    inet_ntoa_r(dstaddr, dstbuf, sizeof(dstbuf)),
-                    (unsigned)icmp->type);
-            }
-        }
         icmp_input(dev);
         break;
 #endif
